@@ -4,7 +4,11 @@ import { Specialty, Difficulty, Modality, RadioCase, ImageSeries } from './types
 import { SPECIALTY_MAP, DIFFICULTY_MAP } from './constants';
 import { Badge } from './components/Badge';
 import { CaseForm } from './components/CaseForm';
+import { LoginForm } from './components/LoginForm';
+import { RegisterForm } from './components/RegisterForm';
 import { semanticSearch } from './services/geminiService';
+import { postPatientMapping, getStoredInboundToken, setStoredInboundToken } from './services/patientMappingService';
+import { fetchSession, logout as authLogout, type SessionInfo } from './services/authService';
 import { 
   Plus, 
   Search, 
@@ -25,9 +29,6 @@ import {
   Settings2,
   X,
   Check,
-  Eye,
-  EyeOff,
-  Printer,
   Maximize2,
   Star,
   Hash,
@@ -36,7 +37,9 @@ import {
   ZoomIn,
   ZoomOut,
   RotateCcw,
-  Layers
+  Layers,
+  KeyRound,
+  LogOut
 } from 'lucide-react';
 
 const IGPLogo = ({ className = "h-12" }: { className?: string }) => (
@@ -302,6 +305,63 @@ const MedicalStackViewer = ({ series }: { series: ImageSeries[] }) => {
   );
 };
 
+const CASE_CODE_RE = /^CASE-(\d+)$/;
+
+function extractCaseCode(c: Record<string, unknown>): string | null {
+  const cc = c.caseCode;
+  if (typeof cc === 'string' && CASE_CODE_RE.test(cc)) return cc;
+  const pid = c.patientId;
+  if (typeof pid === 'string' && CASE_CODE_RE.test(pid)) return pid;
+  return null;
+}
+
+function getNextCaseCode(cases: RadioCase[]): string {
+  let max = 0;
+  for (const c of cases) {
+    const m = CASE_CODE_RE.exec(c.caseCode);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `CASE-${String(max + 1).padStart(5, '0')}`;
+}
+
+function migrateLoadedCases(raw: unknown): RadioCase[] {
+  if (!Array.isArray(raw)) return [];
+  const list = raw.filter((x): x is Record<string, unknown> => x !== null && typeof x === 'object');
+
+  let maxNum = 0;
+  const rows = list.map((c) => {
+    const code = extractCaseCode(c);
+    if (code) {
+      const m = CASE_CODE_RE.exec(code)!;
+      maxNum = Math.max(maxNum, parseInt(m[1], 10));
+    }
+    return {
+      id: String(c.id),
+      code,
+      dateAdded: String(c.dateAdded ?? ''),
+      c,
+    };
+  });
+
+  const needAssign = rows.filter((x) => !x.code);
+  const sortedNeed = [...needAssign].sort((a, b) => new Date(a.dateAdded).getTime() - new Date(b.dateAdded).getTime());
+  const codeById = new Map<string, string>();
+  let next = maxNum + 1;
+  for (const item of sortedNeed) {
+    codeById.set(item.id, `CASE-${String(next++).padStart(5, '0')}`);
+  }
+
+  return rows.map(({ c, id, code }) => {
+    const caseCode = code ?? codeById.get(id)!;
+    const rest: Record<string, unknown> = { ...c };
+    delete rest.lastName;
+    delete rest.firstName;
+    delete rest.patientId;
+    delete rest.caseCode;
+    return { ...rest, caseCode } as RadioCase;
+  });
+}
+
 export default function App() {
   const [cases, setCases] = useState<RadioCase[]>([]);
   const [favorites, setFavorites] = useState<string[]>(() => {
@@ -313,7 +373,10 @@ export default function App() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isStatsOpen, setIsStatsOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isAnonymized, setIsAnonymized] = useState(false);
+  const [inboundTokenDraft, setInboundTokenDraft] = useState('');
+  const [authLoading, setAuthLoading] = useState(true);
+  const [session, setSession] = useState<SessionInfo | null>(null);
+  const [authView, setAuthView] = useState<'login' | 'register'>('login');
   const [expandedCaseId, setExpandedCaseId] = useState<string | null>(null);
   const [isDark, setIsDark] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -338,6 +401,19 @@ export default function App() {
     localStorage.setItem('radio_favorites', JSON.stringify(favorites));
   }, [favorites]);
 
+  useEffect(() => {
+    if (isSettingsOpen) {
+      setInboundTokenDraft(getStoredInboundToken() ?? '');
+    }
+  }, [isSettingsOpen]);
+
+  useEffect(() => {
+    void fetchSession().then((s) => {
+      setSession(s);
+      setAuthLoading(false);
+    });
+  }, []);
+
   const tabs = useMemo(() => ['Tous', 'Favoris', ...visibleSpecialties], [visibleSpecialties]);
   const [isSmartLoading, setIsSmartLoading] = useState(false);
   const [smartResults, setSmartResults] = useState<{ matches: {id: string, reason: string}[], suggestedKeywords: string[] } | null>(null);
@@ -349,7 +425,7 @@ export default function App() {
 
   useEffect(() => {
     const saved = localStorage.getItem('radio_cases');
-    const initialData = saved ? JSON.parse(saved) : [];
+    const initialData = migrateLoadedCases(saved ? JSON.parse(saved) : []);
     setCases(initialData);
     isInitialMount.current = false;
   }, []);
@@ -363,8 +439,7 @@ export default function App() {
   const searchMatchedCases = useMemo(() => {
     return cases.filter(c => {
       const basicSearch = 
-        c.patientId.toLowerCase().includes(searchQuery.toLowerCase()) || 
-        c.lastName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        c.caseCode.toLowerCase().includes(searchQuery.toLowerCase()) ||
         c.diagnosis.toLowerCase().includes(searchQuery.toLowerCase()) ||
         c.clinicalNote.toLowerCase().includes(searchQuery.toLowerCase());
 
@@ -436,9 +511,49 @@ export default function App() {
     setIsSmartLoading(false);
   };
 
-  const handleAddCase = (data: Omit<RadioCase, 'id' | 'dateAdded'>) => {
-    const newCase: RadioCase = { ...data, id: Math.random().toString(36).substr(2, 9), dateAdded: new Date().toISOString() };
-    setCases(prev => [newCase, ...prev]);
+  const handleAddCase = async (
+    data: Omit<RadioCase, 'id' | 'dateAdded' | 'caseCode'>,
+    patientMapping?: { ipp: string; lastName?: string; firstName?: string } | null
+  ) => {
+    let nextCode = '';
+    let newId = '';
+    setCases((prev) => {
+      nextCode = getNextCaseCode(prev);
+      newId = Math.random().toString(36).substr(2, 9);
+      const newCase: RadioCase = {
+        ...data,
+        caseCode: nextCode,
+        id: newId,
+        dateAdded: new Date().toISOString(),
+      };
+      return [newCase, ...prev];
+    });
+
+    if (patientMapping?.ipp) {
+      const result = await postPatientMapping({
+        caseCode: nextCode,
+        caseId: newId,
+        ipp: patientMapping.ipp,
+        lastName: patientMapping.lastName,
+        firstName: patientMapping.firstName,
+      });
+      if (!result.ok) {
+        if (result.reason === "not_configured") {
+          window.alert(
+            "Un IPP a été saisi mais le proxy serveur n'est pas configuré (variable PATIENT_MAPPING_UPSTREAM_URL côté hébergement). Le cas est enregistré en local uniquement."
+          );
+        } else if (result.reason === "unauthorized") {
+          window.alert(
+            "Accès refusé par le proxy (401). Enregistrez le jeton d'accès dans Réglages — correspondance patient — (identique à PATIENT_MAPPING_INBOUND_SECRET côté serveur), puis réessayez."
+          );
+        } else {
+          window.alert(
+            "Le cas a été enregistré localement, mais la transmission vers votre base sécurisée a échoué. Vérifiez le réseau et l'endpoint upstream."
+          );
+        }
+      }
+    }
+
     setIsFormOpen(false);
   };
 
@@ -451,10 +566,46 @@ export default function App() {
     }
   };
 
-  const formatName = (last: string, first: string) => {
-    if (!isAnonymized) return `${last.toUpperCase()} ${first}`;
-    return `${last.charAt(0)}*** ${first.charAt(0)}***`;
+  const handleAuthLogout = async () => {
+    await authLogout();
+    const s = await fetchSession();
+    setSession(s);
   };
+
+  if (authLoading || session === null) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-slate-50 dark:bg-[#020617]">
+        <Loader2 className="w-12 h-12 animate-spin text-blue-600" />
+        <p className="text-sm text-slate-400">Chargement…</p>
+      </div>
+    );
+  }
+
+  if (session.authRequired && !session.authenticated) {
+    if (session.multiUser && session.allowPublicRegistration && authView === 'register') {
+      return (
+        <RegisterForm
+          isDark={isDark}
+          onSuccess={() => void fetchSession().then(setSession)}
+          onBack={() => setAuthView('login')}
+        />
+      );
+    }
+    return (
+      <LoginForm
+        isDark={isDark}
+        onSuccess={() => void fetchSession().then(setSession)}
+        onGoRegister={
+          session.multiUser && session.allowPublicRegistration
+            ? () => setAuthView('register')
+            : undefined
+        }
+        registrationHint={
+          session.authRequired ? session.registrationHint : undefined
+        }
+      />
+    );
+  }
 
   return (
     <div className={`min-h-screen bg-slate-50/40 dark:bg-[#020617] text-slate-900 dark:text-slate-100 transition-all duration-700`}>
@@ -467,10 +618,16 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-4">
-            <button onClick={() => setIsAnonymized(!isAnonymized)} className={`flex items-center gap-3 px-6 py-3 rounded-full border transition-all ${isAnonymized ? 'bg-amber-500/10 border-amber-500 text-amber-500 shadow-lg shadow-amber-500/5' : 'bg-white dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-700 hover:border-blue-400'}`}>
-              {isAnonymized ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-              <span className="text-xs font-black uppercase tracking-widest hidden lg:inline">{isAnonymized ? 'Anonymisé' : 'Non Anonymisé'}</span>
-            </button>
+            {session.authRequired && session.authenticated && (
+              <button
+                type="button"
+                onClick={() => void handleAuthLogout()}
+                className="p-4 rounded-full bg-white dark:bg-slate-800 text-slate-400 border border-slate-200 dark:border-slate-700 hover:text-rose-500 transition-all shadow-sm"
+                title="Déconnexion"
+              >
+                <LogOut className="w-5 h-5" />
+              </button>
+            )}
             <button onClick={() => setIsDark(!isDark)} className="p-4 rounded-full bg-white dark:bg-slate-800 text-slate-400 border border-slate-200 dark:border-slate-700 hover:text-blue-500 transition-all shadow-sm">
               {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
             </button>
@@ -583,7 +740,7 @@ export default function App() {
               value={searchQuery} 
               onChange={e => {setSearchQuery(e.target.value); if(!e.target.value) setSmartResults(null);}} 
               onKeyDown={(e) => e.key === 'Enter' && handleSmartSearch()}
-              placeholder="Recherche IPP, lésion, diagnostic..." 
+              placeholder="Recherche n° de cas, lésion, diagnostic..." 
               className="w-full pl-14 pr-14 py-4.5 bg-slate-50 dark:bg-slate-950 border border-transparent dark:border-slate-800 focus:border-blue-500/30 rounded-2xl outline-none font-medium text-base transition-all shadow-inner" 
             />
             <button 
@@ -605,7 +762,7 @@ export default function App() {
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-slate-50/50 dark:bg-slate-800/20 border-b border-slate-100 dark:border-slate-800">
-                <th className="px-12 py-8 text-xs font-black text-slate-400 uppercase tracking-widest">Dossier / IPP</th>
+                <th className="px-12 py-8 text-xs font-black text-slate-400 uppercase tracking-widest">Référence dossier</th>
                 <th className="px-12 py-8 text-xs font-black text-slate-400 uppercase tracking-widest">Spécialité & Niveau</th>
                 <th className="px-12 py-8 text-xs font-black text-slate-400 uppercase tracking-widest">Diagnostic & Clinique</th>
                 <th className="px-12 py-8 text-right">Options</th>
@@ -624,12 +781,11 @@ export default function App() {
                       <td className="px-12 py-10">
                         <div className="flex flex-col gap-2">
                           <div className="flex items-center gap-3">
-                            <span className={`text-base font-bold tracking-tight transition-all ${isAnonymized ? 'blur-[6px]' : 'text-slate-900 dark:text-slate-100'}`}>
-                              {formatName(c.lastName, c.firstName)}
+                            <span className="text-base font-bold tracking-tight text-slate-900 dark:text-slate-100 font-mono">
+                              {c.caseCode}
                             </span>
                             {isFavorite && <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />}
                           </div>
-                          <span className="font-mono text-[10px] font-black text-slate-400 bg-slate-100 dark:bg-slate-800 px-3 py-1 rounded-lg w-fit shadow-sm uppercase tracking-widest">{c.patientId}</span>
                         </div>
                       </td>
                       <td className="px-12 py-10">
@@ -700,17 +856,56 @@ export default function App() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-8 bg-slate-950/60 backdrop-blur-xl animate-in fade-in duration-200">
           <div className="bg-white dark:bg-slate-900 rounded-[3rem] shadow-2xl w-full max-w-xl overflow-hidden border border-slate-200 dark:border-slate-800">
             <div className="flex items-center justify-between p-10 border-b dark:border-slate-800">
-              <h2 className="text-2xl font-light tracking-tighter">Filtres Spécialités</h2>
+              <h2 className="text-2xl font-light tracking-tighter">Configuration</h2>
               <button onClick={() => setIsSettingsOpen(false)} className="p-3 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-all"><X className="w-6 h-6" /></button>
             </div>
-            <div className="p-10 space-y-4 max-h-[60vh] overflow-y-auto no-scrollbar">
-                <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-6">Sélectionnez les disciplines actives</p>
-                {Object.values(Specialty).map(s => (
-                  <button key={s} onClick={() => toggleSpecialtyVisibility(s)} className={`flex items-center justify-between w-full p-5 rounded-2xl border transition-all ${visibleSpecialties.includes(s) ? 'bg-blue-50/50 dark:bg-blue-900/10 border-blue-200 dark:border-blue-800 shadow-sm' : 'bg-transparent border-slate-100 dark:border-slate-800 opacity-60'}`}>
-                    <span className="text-sm font-bold text-slate-700 dark:text-slate-300">{s}</span>
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 transition-all ${visibleSpecialties.includes(s) ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-200 dark:border-slate-700'}`}>{visibleSpecialties.includes(s) && <Check className="w-5 h-5" strokeWidth={3} />}</div>
-                  </button>
-                ))}
+            <div className="p-10 space-y-8 max-h-[60vh] overflow-y-auto no-scrollbar">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-6">Filtres spécialités</p>
+                  <div className="space-y-4">
+                    {Object.values(Specialty).map(s => (
+                      <button key={s} onClick={() => toggleSpecialtyVisibility(s)} className={`flex items-center justify-between w-full p-5 rounded-2xl border transition-all ${visibleSpecialties.includes(s) ? 'bg-blue-50/50 dark:bg-blue-900/10 border-blue-200 dark:border-blue-800 shadow-sm' : 'bg-transparent border-slate-100 dark:border-slate-800 opacity-60'}`}>
+                        <span className="text-sm font-bold text-slate-700 dark:text-slate-300">{s}</span>
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 transition-all ${visibleSpecialties.includes(s) ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-200 dark:border-slate-700'}`}>{visibleSpecialties.includes(s) && <Check className="w-5 h-5" strokeWidth={3} />}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-6 border-t border-slate-100 dark:border-slate-800 space-y-4">
+                  <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+                    <KeyRound className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <p className="text-xs font-black uppercase tracking-widest text-slate-400">Correspondance patient (proxy)</p>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                    Si votre DSI active <span className="font-mono">PATIENT_MAPPING_INBOUND_SECRET</span> sur le serveur, collez ici la <strong>même valeur</strong> pour cette session de navigateur.
+                    Elle est stockée en <span className="font-mono">sessionStorage</span> uniquement (pas dans le code, pas dans localStorage).
+                  </p>
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    value={inboundTokenDraft}
+                    onChange={(e) => setInboundTokenDraft(e.target.value)}
+                    placeholder="Jeton d'accès au proxy"
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm"
+                  />
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => { setStoredInboundToken(inboundTokenDraft); }}
+                      className="flex-1 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold uppercase tracking-widest"
+                    >
+                      Enregistrer le jeton (session)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setStoredInboundToken(null); setInboundTokenDraft(''); }}
+                      className="px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-500"
+                    >
+                      Effacer
+                    </button>
+                  </div>
+                </div>
             </div>
             <div className="p-10 border-t dark:border-slate-800">
               <button onClick={() => setIsSettingsOpen(false)} className="w-full py-5 bg-slate-950 dark:bg-white text-white dark:text-slate-950 rounded-2xl font-black uppercase tracking-[0.25em] text-xs shadow-2xl active:scale-95 transition-transform">Valider la Configuration</button>
@@ -719,7 +914,14 @@ export default function App() {
         </div>
       )}
 
-      {isFormOpen && <CaseForm onSave={handleAddCase} onClose={() => setIsFormOpen(false)} isDark={isDark} />}
+      {isFormOpen && (
+        <CaseForm
+          nextCaseCode={getNextCaseCode(cases)}
+          onSave={handleAddCase}
+          onClose={() => setIsFormOpen(false)}
+          isDark={isDark}
+        />
+      )}
     </div>
   );
 }

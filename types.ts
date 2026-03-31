@@ -37,9 +37,8 @@ export interface ImageSeries {
 
 export interface RadioCase {
   id: string;
-  patientId: string;
-  lastName: string;
-  firstName: string;
+  /** Identifiant générique affiché, ex. CASE-00001 */
+  caseCode: string;
   specialty: Specialty;
   difficulty: Difficulty;
   modality: Modality;

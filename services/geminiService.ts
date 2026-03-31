@@ -1,8 +1,10 @@
 import { RadioCase } from "../types";
+import { apiUrl } from "./apiBase";
 
 export const analyzeCase = async (clinicalNote: string) => {
-  const response = await fetch("/api/gemini", {
+  const response = await fetch(apiUrl("api/gemini"), {
     method: "POST",
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
     },
@@ -25,12 +27,14 @@ export const semanticSearch = async (query: string, cases: RadioCase[]) => {
 
   const casesSummary = cases.map(c => ({
     id: c.id,
+    caseCode: c.caseCode,
     diagnosis: c.diagnosis,
     note: c.clinicalNote,
   }));
 
-  const response = await fetch("/api/gemini", {
+  const response = await fetch(apiUrl("api/gemini"), {
     method: "POST",
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
     },

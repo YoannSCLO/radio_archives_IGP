@@ -1,20 +1,27 @@
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Specialty, Difficulty, Modality, RadioCase, ImageSeries } from '../types';
 import { analyzeCase } from '../services/geminiService';
-import { Loader2, Sparkles, X, ClipboardList, User, Image as ImageIcon, Plus, Trash2 } from 'lucide-react';
+import { Loader2, Sparkles, X, ClipboardList, Hash, Image as ImageIcon, Plus, Trash2, Shield } from 'lucide-react';
+import {
+  fetchPatientMappingProxyStatus,
+  getStoredInboundToken,
+  type PatientMappingPayload,
+  type PatientMappingProxyStatus,
+} from '../services/patientMappingService';
+import { apiUrl } from '../services/apiBase';
+
+type NewCaseFormData = Omit<RadioCase, 'id' | 'dateAdded' | 'caseCode'>;
 
 interface CaseFormProps {
-  onSave: (data: Omit<RadioCase, 'id' | 'dateAdded'>) => void;
+  nextCaseCode: string;
+  onSave: (data: NewCaseFormData, patientMapping?: Omit<PatientMappingPayload, 'caseCode' | 'caseId'> | null) => void | Promise<void>;
   onClose: () => void;
   isDark?: boolean;
 }
 
-export const CaseForm: React.FC<CaseFormProps> = ({ onSave, onClose, isDark }) => {
-  const [formData, setFormData] = useState({
-    patientId: '',
-    lastName: '',
-    firstName: '',
+export const CaseForm: React.FC<CaseFormProps> = ({ nextCaseCode, onSave, onClose, isDark }) => {
+  const [formData, setFormData] = useState<NewCaseFormData>({
     specialty: Specialty.NEURORADIOLOGY,
     difficulty: Difficulty.BEGINNER,
     modality: Modality.MRI,
@@ -24,7 +31,26 @@ export const CaseForm: React.FC<CaseFormProps> = ({ onSave, onClose, isDark }) =
   });
   
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  /** Jamais fusionné dans formData : ne part pas vers localStorage, uniquement vers l’API HDS si configurée. */
+  const [ipp, setIpp] = useState('');
+  const [mappingLastName, setMappingLastName] = useState('');
+  const [mappingFirstName, setMappingFirstName] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [mappingStatus, setMappingStatus] = useState<PatientMappingProxyStatus | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchPatientMappingProxyStatus().then((s) => {
+      if (!cancelled) setMappingStatus(s);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const missingInboundToken =
+    mappingStatus?.inboundAuthRequired === true && !getStoredInboundToken();
 
   const handleAnalyze = async () => {
     if (!formData.clinicalNote) return;
@@ -77,9 +103,23 @@ export const CaseForm: React.FC<CaseFormProps> = ({ onSave, onClose, isDark }) =
     }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSave(formData);
+    setIsSubmitting(true);
+    try {
+      const trimmedIpp = ipp.trim();
+      const patientMapping =
+        trimmedIpp.length > 0
+          ? {
+              ipp: trimmedIpp,
+              ...(mappingLastName.trim() ? { lastName: mappingLastName.trim() } : {}),
+              ...(mappingFirstName.trim() ? { firstName: mappingFirstName.trim() } : {}),
+            }
+          : null;
+      await Promise.resolve(onSave(formData, patientMapping));
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const inputClasses = `w-full px-4 py-3 border rounded-xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500/50 outline-none transition-all text-sm font-medium ${
@@ -105,18 +145,88 @@ export const CaseForm: React.FC<CaseFormProps> = ({ onSave, onClose, isDark }) =
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-8 space-y-6 no-scrollbar">
-          {/* Section Identité */}
-          <div className="bg-slate-50 dark:bg-slate-800/50 p-6 rounded-3xl border border-slate-100 dark:border-slate-700 space-y-4">
-             <div className="flex items-center gap-2 mb-2">
-                <User className="w-4 h-4 text-blue-500" />
-                <span className={labelClasses}>Identité du Patient</span>
+        <form id="case-form-main" onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-8 space-y-6 no-scrollbar">
+          <div className="bg-slate-50 dark:bg-slate-800/50 p-6 rounded-3xl border border-slate-100 dark:border-slate-700 space-y-3">
+             <div className="flex items-center gap-2 mb-1">
+                <Hash className="w-4 h-4 text-blue-500" />
+                <span className={labelClasses}>Référence du dossier</span>
              </div>
-             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-               <input required type="text" value={formData.lastName} onChange={e => setFormData({...formData, lastName: e.target.value})} placeholder="Nom" className={inputClasses} />
-               <input required type="text" value={formData.firstName} onChange={e => setFormData({...formData, firstName: e.target.value})} placeholder="Prénom" className={inputClasses} />
-             </div>
-             <input required type="text" value={formData.patientId} onChange={e => setFormData({...formData, patientId: e.target.value})} placeholder="Identifiant Patient (ID / IPP)" className={inputClasses} />
+             <p className={`text-sm ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
+               À l&apos;enregistrement, ce cas recevra le numéro{' '}
+               <span className="font-mono font-bold text-blue-600 dark:text-blue-400">{nextCaseCode}</span>.
+             </p>
+          </div>
+
+          <div className={`p-6 rounded-3xl border space-y-4 ${isDark ? 'bg-emerald-950/20 border-emerald-900/40' : 'bg-emerald-50/80 border-emerald-200/60'}`}>
+            <div className="flex items-start gap-3">
+              <Shield className={`w-5 h-5 shrink-0 mt-0.5 ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`} />
+              <div className="space-y-2">
+                <span className={`${labelClasses} mb-0`}>Correspondance patient (données de santé)</span>
+                <p className={`text-xs leading-relaxed ${isDark ? 'text-emerald-200/80' : 'text-emerald-900/80'}`}>
+                  Optionnel : saisissez l&apos;IPP (et éventuellement le nom) pour retrouver le cas dans votre PACS.
+                  Ces informations ne sont <strong>pas</strong> enregistrées dans cette application : elles partent
+                  vers votre système via le <strong>proxy serveur</strong> (
+                  <span className="font-mono">{apiUrl('api/patient-mapping')}</span>) ;
+                  l&apos;URL et les secrets vers l&apos;HDS sont définis uniquement côté serveur (pas dans le bundle).
+                </p>
+                {mappingStatus?.configured === false && (
+                  <p className={`text-xs font-semibold ${isDark ? 'text-amber-300' : 'text-amber-800'}`}>
+                    Le proxy n&apos;a pas d&apos;URL upstream configurée (<span className="font-mono">PATIENT_MAPPING_UPSTREAM_URL</span> sur
+                    l&apos;hébergement ou en local). La saisie IPP ne sera pas transmise.
+                  </p>
+                )}
+                {missingInboundToken && (
+                  <p className={`text-xs font-semibold ${isDark ? 'text-rose-300' : 'text-rose-800'}`}>
+                    Un jeton d&apos;accès au proxy est requis pour cette session : ouvrez <strong>Réglages</strong> (engrenage),
+                    section correspondance patient, et collez le jeton fourni par votre DSI (identique à{' '}
+                    <span className="font-mono">PATIENT_MAPPING_INBOUND_SECRET</span> côté serveur).
+                  </p>
+                )}
+                {mappingStatus?.mtlsUpstream && (
+                  <p className={`text-[10px] opacity-80 ${isDark ? 'text-emerald-300' : 'text-emerald-900'}`}>
+                    Relais vers l&apos;HDS : mTLS activé côté serveur (certificat client).
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="md:col-span-1">
+                <label className={labelClasses}>IPP (identifiant patient)</label>
+                <input
+                  type="text"
+                  value={ipp}
+                  onChange={(e) => setIpp(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                  className={inputClasses}
+                  placeholder="Ex. 12345678"
+                />
+              </div>
+              <div>
+                <label className={labelClasses}>Nom (optionnel)</label>
+                <input
+                  type="text"
+                  value={mappingLastName}
+                  onChange={(e) => setMappingLastName(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                  className={inputClasses}
+                  placeholder="Non stocké dans l&apos;app"
+                />
+              </div>
+              <div>
+                <label className={labelClasses}>Prénom (optionnel)</label>
+                <input
+                  type="text"
+                  value={mappingFirstName}
+                  onChange={(e) => setMappingFirstName(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                  className={inputClasses}
+                  placeholder="Non stocké dans l&apos;app"
+                />
+              </div>
+            </div>
           </div>
 
           {/* Section Médicale */}
@@ -207,8 +317,11 @@ export const CaseForm: React.FC<CaseFormProps> = ({ onSave, onClose, isDark }) =
         </form>
 
         <div className={`p-8 border-t flex gap-4 ${isDark ? 'border-slate-800 bg-slate-900/50' : 'border-slate-50 bg-slate-50/50'}`}>
-          <button type="button" onClick={onClose} className="flex-1 px-6 py-3 text-sm font-bold rounded-2xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">Annuler</button>
-          <button onClick={handleSubmit} className="flex-1 px-6 py-3 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-2xl shadow-xl shadow-blue-500/20 active:scale-95 transition-all">Sauvegarder</button>
+          <button type="button" disabled={isSubmitting} onClick={onClose} className="flex-1 px-6 py-3 text-sm font-bold rounded-2xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50">Annuler</button>
+          <button type="submit" form="case-form-main" disabled={isSubmitting} className="flex-1 px-6 py-3 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-2xl shadow-xl shadow-blue-500/20 active:scale-95 transition-all disabled:opacity-60 flex items-center justify-center gap-2">
+            {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+            Sauvegarder
+          </button>
         </div>
       </div>
     </div>
