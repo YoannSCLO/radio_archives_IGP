@@ -8,10 +8,9 @@ import {
 import {
   buildClearSessionCookie,
   getUserFromCookieHeader,
-  isAllowPublicRegistration,
   isAuthConfigured,
 } from "../server/authCore";
-import { isMultiUserMode } from "../server/db";
+import { isAllowPublicRegistration, isMultiUserMode } from "../server/authEnv";
 import { pathWithoutViteBase } from "./viteBasePath";
 
 function readBody(req: IncomingMessage): Promise<string> {

@@ -1,12 +1,19 @@
-import postgres from "postgres";
+import { createRequire } from "node:module";
 
-let sql: ReturnType<typeof postgres> | null = null;
+export { isMultiUserMode } from "./authEnv";
+
+const require = createRequire(import.meta.url);
+
+// Chargement paresseux : évite d’importer `postgres` au chargement de chaque fonction API (crash Vercel).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let sql: any = null;
 let schemaEnsured = false;
 
-export function getSql(): ReturnType<typeof postgres> | null {
+export function getSql(): any {
   const url = process.env.DATABASE_URL?.trim();
   if (!url) return null;
   if (!sql) {
+    const postgres = require("postgres");
     const local = url.includes("localhost") || url.includes("127.0.0.1");
     sql = postgres(url, {
       max: 1,
@@ -14,12 +21,6 @@ export function getSql(): ReturnType<typeof postgres> | null {
     });
   }
   return sql;
-}
-
-export function isMultiUserMode(): boolean {
-  if (process.env.DATABASE_URL?.trim()) return true;
-  const allow = process.env.ALLOW_PUBLIC_REGISTRATION?.trim().toLowerCase();
-  return allow === "true" || allow === "1" || allow === "yes";
 }
 
 export async function ensureUsersTable(): Promise<void> {

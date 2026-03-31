@@ -1,10 +1,9 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import {
   getUserFromCookieHeader,
-  isAllowPublicRegistration,
   isAuthConfigured,
 } from "../../server/authCore";
-import { isMultiUserMode } from "../../server/db";
+import { isAllowPublicRegistration, isMultiUserMode } from "../../server/authEnv";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET") {
