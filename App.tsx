@@ -23,7 +23,6 @@ import {
   Monitor,
   LayoutDashboard,
   BarChart3,
-  PieChart,
   ChevronDown,
   ChevronUp,
   Settings2,
@@ -65,44 +64,6 @@ const RadioArchiveLogo = () => (
     </div>
   </div>
 );
-
-const DonutChart = ({ data, total }: { data: [string, number][], total: number }) => {
-  let currentOffset = 0;
-  return (
-    <div className="relative w-44 h-44">
-      <svg viewBox="0 0 100 100" className="transform -rotate-90 w-full h-full">
-        {data.map(([name, count], idx) => {
-          const percentage = (count / (total || 1)) * 100;
-          const strokeDasharray = `${percentage} ${100 - percentage}`;
-          const strokeDashoffset = -currentOffset;
-          currentOffset += percentage;
-          const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899'];
-          const color = colors[idx % colors.length];
-
-          return (
-            <circle
-              key={name}
-              cx="50"
-              cy="50"
-              r="42"
-              fill="transparent"
-              stroke={color}
-              strokeWidth="9"
-              strokeDasharray={strokeDasharray}
-              strokeDashoffset={strokeDashoffset}
-              strokeLinecap="round"
-              className="transition-all duration-1000 ease-in-out"
-            />
-          );
-        })}
-      </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-        <span className="text-3xl font-light text-slate-900 dark:text-white tracking-tighter">{total}</span>
-        <span className="text-[9px] font-bold uppercase text-slate-400 tracking-widest">Dossiers</span>
-      </div>
-    </div>
-  );
-};
 
 const MedicalStackViewer = ({ series }: { series: ImageSeries[] }) => {
   const [activeSeriesIdx, setActiveSeriesIdx] = useState(0);
@@ -488,10 +449,11 @@ export default function App() {
       modalityDist[c.modality] = (modalityDist[c.modality] || 0) + 1;
     });
     
-    return { 
+    return {
       specialty: Object.entries(specialtyDist).sort((a, b) => b[1] - a[1]),
-      difficulty: Object.entries(difficultyDist).sort((a, b) => b[1] - a[1]),
-      modality: Object.entries(modalityDist).sort((a, b) => b[1] - a[1])
+      /** Toujours les 4 niveaux, ordre fixe (du plus accessible au plus expert). */
+      difficultyByLevel: Object.values(Difficulty).map((d) => [d, difficultyDist[d] ?? 0] as [string, number]),
+      modality: Object.entries(modalityDist).sort((a, b) => b[1] - a[1]),
     };
   }, [cases]);
 
@@ -537,14 +499,15 @@ export default function App() {
         lastName: patientMapping.lastName,
         firstName: patientMapping.firstName,
       });
-      if (!result.ok) {
-        if (result.reason === "not_configured") {
+      if (result.ok === false) {
+        const { reason } = result;
+        if (reason === "not_configured") {
           window.alert(
             "Un IPP a été saisi mais le proxy serveur n'est pas configuré (variable PATIENT_MAPPING_UPSTREAM_URL côté hébergement). Le cas est enregistré en local uniquement."
           );
-        } else if (result.reason === "unauthorized") {
+        } else if (reason === "unauthorized") {
           window.alert(
-            "Accès refusé par le proxy (401). Enregistrez le jeton d'accès dans Réglages — correspondance patient — (identique à PATIENT_MAPPING_INBOUND_SECRET côté serveur), puis réessayez."
+            "Accès refusé (401). Indiquez le jeton dans Réglages → correspondance patient, puis réessayez."
           );
         } else {
           window.alert(
@@ -674,24 +637,29 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="bg-white dark:bg-slate-900/50 p-10 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-sm flex flex-col items-center justify-center">
-                <div className="flex items-center gap-4 mb-10 self-start">
-                  <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded-xl text-amber-600"><PieChart className="w-5 h-5" /></div>
+              <div className="bg-white dark:bg-slate-900/50 p-10 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-sm">
+                <div className="flex items-center gap-4 mb-10">
+                  <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded-xl text-amber-600"><BarChart3 className="w-5 h-5" /></div>
                   <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">Complexité</h3>
                 </div>
-                <div className="flex items-center gap-10 w-full justify-center">
-                  <DonutChart data={stats.difficulty} total={cases.length} />
-                  <div className="flex flex-col gap-3">
-                    {stats.difficulty.map(([name, count], idx) => {
-                      const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899'];
-                      return (
-                        <div key={name} className="flex items-center gap-3">
-                          <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: colors[idx % colors.length] }} />
-                          <span className="text-xs font-bold text-slate-500">{name}</span>
+                <div className="space-y-5">
+                  {stats.difficultyByLevel.map(([name, count]) => {
+                    const cfg = DIFFICULTY_MAP[name as Difficulty];
+                    return (
+                      <div key={name} className="flex flex-col gap-2">
+                        <div className="flex justify-between items-center text-xs font-bold">
+                          <span className={`${cfg.color}`}>{name}</span>
+                          <span className={`tabular-nums ${cfg.color}`}>{count}</span>
                         </div>
-                      );
-                    })}
-                  </div>
+                        <div className="h-2.5 bg-slate-50 dark:bg-slate-800 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all duration-500 ${cfg.bar}`}
+                            style={{ width: `${cases.length ? (count / cases.length) * 100 : 0}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -875,11 +843,10 @@ export default function App() {
                 <div className="pt-6 border-t border-slate-100 dark:border-slate-800 space-y-4">
                   <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
                     <KeyRound className="w-5 h-5 text-emerald-600 shrink-0" />
-                    <p className="text-xs font-black uppercase tracking-widest text-slate-400">Correspondance patient (proxy)</p>
+                    <p className="text-xs font-black uppercase tracking-widest text-slate-400">Correspondance patient</p>
                   </div>
                   <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                    Si votre DSI active <span className="font-mono">PATIENT_MAPPING_INBOUND_SECRET</span> sur le serveur, collez ici la <strong>même valeur</strong> pour cette session de navigateur.
-                    Elle est stockée en <span className="font-mono">sessionStorage</span> uniquement (pas dans le code, pas dans localStorage).
+                    Si la DSI vous a donné un jeton d&apos;accès, collez-le ici pour cette session (uniquement sur ce navigateur).
                   </p>
                   <input
                     type="password"

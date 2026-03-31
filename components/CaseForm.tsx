@@ -1,15 +1,9 @@
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import { Specialty, Difficulty, Modality, RadioCase, ImageSeries } from '../types';
 import { analyzeCase } from '../services/geminiService';
-import { Loader2, Sparkles, X, ClipboardList, Hash, Image as ImageIcon, Plus, Trash2, Shield } from 'lucide-react';
-import {
-  fetchPatientMappingProxyStatus,
-  getStoredInboundToken,
-  type PatientMappingPayload,
-  type PatientMappingProxyStatus,
-} from '../services/patientMappingService';
-import { apiUrl } from '../services/apiBase';
+import { Loader2, Sparkles, X, ClipboardList, Hash, Image as ImageIcon, Plus, Trash2 } from 'lucide-react';
+import type { PatientMappingPayload } from '../services/patientMappingService';
 
 type NewCaseFormData = Omit<RadioCase, 'id' | 'dateAdded' | 'caseCode'>;
 
@@ -32,25 +26,10 @@ export const CaseForm: React.FC<CaseFormProps> = ({ nextCaseCode, onSave, onClos
   
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  /** Jamais fusionné dans formData : ne part pas vers localStorage, uniquement vers l’API HDS si configurée. */
   const [ipp, setIpp] = useState('');
   const [mappingLastName, setMappingLastName] = useState('');
   const [mappingFirstName, setMappingFirstName] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [mappingStatus, setMappingStatus] = useState<PatientMappingProxyStatus | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    void fetchPatientMappingProxyStatus().then((s) => {
-      if (!cancelled) setMappingStatus(s);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const missingInboundToken =
-    mappingStatus?.inboundAuthRequired === true && !getStoredInboundToken();
 
   const handleAnalyze = async () => {
     if (!formData.clinicalNote) return;
@@ -157,39 +136,7 @@ export const CaseForm: React.FC<CaseFormProps> = ({ nextCaseCode, onSave, onClos
              </p>
           </div>
 
-          <div className={`p-6 rounded-3xl border space-y-4 ${isDark ? 'bg-emerald-950/20 border-emerald-900/40' : 'bg-emerald-50/80 border-emerald-200/60'}`}>
-            <div className="flex items-start gap-3">
-              <Shield className={`w-5 h-5 shrink-0 mt-0.5 ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`} />
-              <div className="space-y-2">
-                <span className={`${labelClasses} mb-0`}>Correspondance patient (données de santé)</span>
-                <p className={`text-xs leading-relaxed ${isDark ? 'text-emerald-200/80' : 'text-emerald-900/80'}`}>
-                  Optionnel : saisissez l&apos;IPP (et éventuellement le nom) pour retrouver le cas dans votre PACS.
-                  Ces informations ne sont <strong>pas</strong> enregistrées dans cette application : elles partent
-                  vers votre système via le <strong>proxy serveur</strong> (
-                  <span className="font-mono">{apiUrl('api/patient-mapping')}</span>) ;
-                  l&apos;URL et les secrets vers l&apos;HDS sont définis uniquement côté serveur (pas dans le bundle).
-                </p>
-                {mappingStatus?.configured === false && (
-                  <p className={`text-xs font-semibold ${isDark ? 'text-amber-300' : 'text-amber-800'}`}>
-                    Le proxy n&apos;a pas d&apos;URL upstream configurée (<span className="font-mono">PATIENT_MAPPING_UPSTREAM_URL</span> sur
-                    l&apos;hébergement ou en local). La saisie IPP ne sera pas transmise.
-                  </p>
-                )}
-                {missingInboundToken && (
-                  <p className={`text-xs font-semibold ${isDark ? 'text-rose-300' : 'text-rose-800'}`}>
-                    Un jeton d&apos;accès au proxy est requis pour cette session : ouvrez <strong>Réglages</strong> (engrenage),
-                    section correspondance patient, et collez le jeton fourni par votre DSI (identique à{' '}
-                    <span className="font-mono">PATIENT_MAPPING_INBOUND_SECRET</span> côté serveur).
-                  </p>
-                )}
-                {mappingStatus?.mtlsUpstream && (
-                  <p className={`text-[10px] opacity-80 ${isDark ? 'text-emerald-300' : 'text-emerald-900'}`}>
-                    Relais vers l&apos;HDS : mTLS activé côté serveur (certificat client).
-                  </p>
-                )}
-              </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="md:col-span-1">
                 <label className={labelClasses}>IPP (identifiant patient)</label>
                 <input
@@ -211,7 +158,7 @@ export const CaseForm: React.FC<CaseFormProps> = ({ nextCaseCode, onSave, onClos
                   autoComplete="off"
                   spellCheck={false}
                   className={inputClasses}
-                  placeholder="Non stocké dans l&apos;app"
+                  placeholder="—"
                 />
               </div>
               <div>
@@ -223,10 +170,9 @@ export const CaseForm: React.FC<CaseFormProps> = ({ nextCaseCode, onSave, onClos
                   autoComplete="off"
                   spellCheck={false}
                   className={inputClasses}
-                  placeholder="Non stocké dans l&apos;app"
+                  placeholder="—"
                 />
               </div>
-            </div>
           </div>
 
           {/* Section Médicale */}
