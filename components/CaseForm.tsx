@@ -1,28 +1,48 @@
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Specialty, Difficulty, Modality, RadioCase, ImageSeries } from '../types';
 import { analyzeCase } from '../services/geminiService';
-import { Loader2, Sparkles, X, ClipboardList, Hash, Image as ImageIcon, Plus, Trash2 } from 'lucide-react';
+import { Loader2, Sparkles, X, ClipboardList, Hash, Image as ImageIcon, Plus, Trash2, Pencil } from 'lucide-react';
 import type { PatientMappingPayload } from '../services/patientMappingService';
 
-type NewCaseFormData = Omit<RadioCase, 'id' | 'dateAdded' | 'caseCode'>;
+type NewCaseFormData = Omit<RadioCase, 'id' | 'dateAdded' | 'caseCode' | 'authorEmail' | 'lastModifiedAt' | 'lastEditJustification'>;
 
 interface CaseFormProps {
+  mode?: 'create' | 'edit';
+  /** Obligatoire si mode === 'edit' */
+  caseToEdit?: RadioCase;
   nextCaseCode: string;
   onSave: (data: NewCaseFormData, patientMapping?: Omit<PatientMappingPayload, 'caseCode' | 'caseId'> | null) => void | Promise<void>;
+  onUpdate?: (
+    caseId: string,
+    data: NewCaseFormData,
+    justification: string,
+    patientMapping?: Omit<PatientMappingPayload, 'caseCode' | 'caseId'> | null
+  ) => void | Promise<void>;
   onClose: () => void;
   isDark?: boolean;
 }
 
-export const CaseForm: React.FC<CaseFormProps> = ({ nextCaseCode, onSave, onClose, isDark }) => {
-  const [formData, setFormData] = useState<NewCaseFormData>({
-    specialty: Specialty.NEURORADIOLOGY,
-    difficulty: Difficulty.BEGINNER,
-    modality: Modality.MRI,
-    clinicalNote: '',
-    diagnosis: '',
-    series: [] as ImageSeries[]
-  });
+const emptyForm = (): NewCaseFormData => ({
+  specialty: Specialty.NEURORADIOLOGY,
+  difficulty: Difficulty.BEGINNER,
+  modality: Modality.MRI,
+  clinicalNote: '',
+  diagnosis: '',
+  series: [] as ImageSeries[],
+});
+
+export const CaseForm: React.FC<CaseFormProps> = ({
+  mode = 'create',
+  caseToEdit,
+  nextCaseCode,
+  onSave,
+  onUpdate,
+  onClose,
+  isDark,
+}) => {
+  const [formData, setFormData] = useState<NewCaseFormData>(emptyForm);
+  const [editJustification, setEditJustification] = useState('');
   
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -30,6 +50,31 @@ export const CaseForm: React.FC<CaseFormProps> = ({ nextCaseCode, onSave, onClos
   const [mappingLastName, setMappingLastName] = useState('');
   const [mappingFirstName, setMappingFirstName] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const isEditMode = mode === 'edit' && Boolean(caseToEdit);
+
+  useEffect(() => {
+    if (mode === 'edit' && caseToEdit) {
+      setFormData({
+        specialty: caseToEdit.specialty,
+        difficulty: caseToEdit.difficulty,
+        modality: caseToEdit.modality,
+        clinicalNote: caseToEdit.clinicalNote,
+        diagnosis: caseToEdit.diagnosis,
+        series: caseToEdit.series?.length ? caseToEdit.series : [],
+      });
+      setEditJustification('');
+      setIpp('');
+      setMappingLastName('');
+      setMappingFirstName('');
+    } else if (mode === 'create') {
+      setFormData(emptyForm());
+      setEditJustification('');
+      setIpp('');
+      setMappingLastName('');
+      setMappingFirstName('');
+    }
+  }, [mode, caseToEdit?.id]);
 
   const handleAnalyze = async () => {
     if (!formData.clinicalNote) return;
@@ -84,6 +129,30 @@ export const CaseForm: React.FC<CaseFormProps> = ({ nextCaseCode, onSave, onClos
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isEditMode && caseToEdit) {
+      const j = editJustification.trim();
+      if (j.length < 10) {
+        window.alert('Indiquez une justification d’au moins 10 caractères pour tracer la modification.');
+        return;
+      }
+      if (!onUpdate) return;
+      setIsSubmitting(true);
+      try {
+        const trimmedIpp = ipp.trim();
+        const patientMapping =
+          trimmedIpp.length > 0
+            ? {
+                ipp: trimmedIpp,
+                ...(mappingLastName.trim() ? { lastName: mappingLastName.trim() } : {}),
+                ...(mappingFirstName.trim() ? { firstName: mappingFirstName.trim() } : {}),
+              }
+            : null;
+        await Promise.resolve(onUpdate(caseToEdit.id, formData, j, patientMapping));
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
     setIsSubmitting(true);
     try {
       const trimmedIpp = ipp.trim();
@@ -114,10 +183,12 @@ export const CaseForm: React.FC<CaseFormProps> = ({ nextCaseCode, onSave, onClos
       <div className={`${isDark ? 'bg-slate-900 border border-slate-800' : 'bg-white'} rounded-[2.5rem] shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col animate-in zoom-in duration-200`}>
         <div className={`flex items-center justify-between px-8 py-6 border-b ${isDark ? 'border-slate-800 bg-slate-900' : 'border-slate-50 bg-white'}`}>
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-500 rounded-xl text-white">
-              <ClipboardList className="w-5 h-5" />
+            <div className={`p-2 rounded-xl text-white ${isEditMode ? 'bg-amber-500' : 'bg-blue-500'}`}>
+              {isEditMode ? <Pencil className="w-5 h-5" /> : <ClipboardList className="w-5 h-5" />}
             </div>
-            <h2 className={`text-lg font-bold ${isDark ? 'text-white' : 'text-slate-800'}`}>Édition du Cas Clinique</h2>
+            <h2 className={`text-lg font-bold ${isDark ? 'text-white' : 'text-slate-800'}`}>
+              {isEditMode ? 'Modifier le cas clinique' : 'Nouveau cas clinique'}
+            </h2>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors text-slate-400">
             <X className="w-5 h-5" />
@@ -130,11 +201,34 @@ export const CaseForm: React.FC<CaseFormProps> = ({ nextCaseCode, onSave, onClos
                 <Hash className="w-4 h-4 text-blue-500" />
                 <span className={labelClasses}>Référence du dossier</span>
              </div>
-             <p className={`text-sm ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
-               À l&apos;enregistrement, ce cas recevra le numéro{' '}
-               <span className="font-mono font-bold text-blue-600 dark:text-blue-400">{nextCaseCode}</span>.
-             </p>
+             {isEditMode && caseToEdit ? (
+               <p className={`text-sm ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
+                 Dossier{' '}
+                 <span className="font-mono font-bold text-blue-600 dark:text-blue-400">{caseToEdit.caseCode}</span>
+                 {' — '}seul l’auteur peut modifier ce cas lorsque la connexion est obligatoire.
+               </p>
+             ) : (
+               <p className={`text-sm ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
+                 À l&apos;enregistrement, ce cas recevra le numéro{' '}
+                 <span className="font-mono font-bold text-blue-600 dark:text-blue-400">{nextCaseCode}</span>.
+               </p>
+             )}
           </div>
+
+          {isEditMode && (
+            <div>
+              <label className={labelClasses}>Justification de la modification (obligatoire)</label>
+              <textarea
+                rows={3}
+                required
+                value={editJustification}
+                onChange={(e) => setEditJustification(e.target.value)}
+                className={`${inputClasses} resize-none`}
+                placeholder="Ex. : correction diagnostic après relecture multidisciplinaire, anonymisation complémentaire…"
+              />
+              <p className="text-[10px] text-slate-400 mt-2">Minimum 10 caractères — traçabilité pédagogique.</p>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="md:col-span-1">
@@ -266,7 +360,7 @@ export const CaseForm: React.FC<CaseFormProps> = ({ nextCaseCode, onSave, onClos
           <button type="button" disabled={isSubmitting} onClick={onClose} className="flex-1 px-6 py-3 text-sm font-bold rounded-2xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50">Annuler</button>
           <button type="submit" form="case-form-main" disabled={isSubmitting} className="flex-1 px-6 py-3 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-2xl shadow-xl shadow-blue-500/20 active:scale-95 transition-all disabled:opacity-60 flex items-center justify-center gap-2">
             {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
-            Sauvegarder
+            {isEditMode ? 'Enregistrer les modifications' : 'Sauvegarder'}
           </button>
         </div>
       </div>

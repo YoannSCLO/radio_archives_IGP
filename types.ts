@@ -46,6 +46,12 @@ export interface RadioCase {
   diagnosis: string;
   dateAdded: string;
   series: ImageSeries[];
+  /** E-mail / login du créateur (si connexion active à la création). Sert à autoriser la modification par l’auteur uniquement. */
+  authorEmail?: string;
+  /** Dernière modification (édition par l’auteur). */
+  lastModifiedAt?: string;
+  /** Justification saisie lors de la dernière modification. */
+  lastEditJustification?: string;
 }
 
 export interface SpecialtyConfig {

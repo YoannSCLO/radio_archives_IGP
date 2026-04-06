@@ -38,7 +38,8 @@ import {
   RotateCcw,
   Layers,
   KeyRound,
-  LogOut
+  LogOut,
+  Pencil
 } from 'lucide-react';
 
 const IGPLogo = ({ className = "h-12" }: { className?: string }) => (
@@ -285,6 +286,15 @@ function getNextCaseCode(cases: RadioCase[]): string {
   return `CASE-${String(max + 1).padStart(5, '0')}`;
 }
 
+/** Modification réservée à l’auteur lorsque la connexion est obligatoire. Sans auth obligatoire, tout utilisateur peut modifier (justification). */
+function canEditCase(session: SessionInfo, c: RadioCase): boolean {
+  if (!session.authRequired) return true;
+  if (!session.authenticated) return false;
+  const u = 'username' in session ? session.username?.trim().toLowerCase() : undefined;
+  if (!u || !c.authorEmail) return false;
+  return c.authorEmail === u;
+}
+
 function migrateLoadedCases(raw: unknown): RadioCase[] {
   if (!Array.isArray(raw)) return [];
   const list = raw.filter((x): x is Record<string, unknown> => x !== null && typeof x === 'object');
@@ -332,6 +342,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<Specialty | 'Tous' | 'Favoris'>('Tous');
   const [searchQuery, setSearchQuery] = useState('');
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [caseToEdit, setCaseToEdit] = useState<RadioCase | null>(null);
   const [isStatsOpen, setIsStatsOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [inboundTokenDraft, setInboundTokenDraft] = useState('');
@@ -474,11 +485,19 @@ export default function App() {
   };
 
   const handleAddCase = async (
-    data: Omit<RadioCase, 'id' | 'dateAdded' | 'caseCode'>,
+    data: Omit<RadioCase, 'id' | 'dateAdded' | 'caseCode' | 'authorEmail' | 'lastModifiedAt' | 'lastEditJustification'>,
     patientMapping?: { ipp: string; lastName?: string; firstName?: string } | null
   ) => {
     let nextCode = '';
     let newId = '';
+    const authorEmail =
+      session &&
+      session.authRequired &&
+      session.authenticated &&
+      'username' in session &&
+      session.username
+        ? session.username.trim().toLowerCase()
+        : undefined;
     setCases((prev) => {
       nextCode = getNextCaseCode(prev);
       newId = Math.random().toString(36).substr(2, 9);
@@ -487,6 +506,7 @@ export default function App() {
         caseCode: nextCode,
         id: newId,
         dateAdded: new Date().toISOString(),
+        ...(authorEmail ? { authorEmail } : {}),
       };
       return [newCase, ...prev];
     });
@@ -517,6 +537,60 @@ export default function App() {
       }
     }
 
+    setIsFormOpen(false);
+  };
+
+  const handleUpdateCase = async (
+    caseId: string,
+    data: Omit<RadioCase, 'id' | 'dateAdded' | 'caseCode' | 'authorEmail' | 'lastModifiedAt' | 'lastEditJustification'>,
+    justification: string,
+    patientMapping?: { ipp: string; lastName?: string; firstName?: string } | null
+  ) => {
+    let code = '';
+    setCases((prev) =>
+      prev.map((c) => {
+        if (c.id !== caseId) return c;
+        code = c.caseCode;
+        return {
+          ...c,
+          ...data,
+          id: c.id,
+          caseCode: c.caseCode,
+          dateAdded: c.dateAdded,
+          authorEmail: c.authorEmail,
+          lastModifiedAt: new Date().toISOString(),
+          lastEditJustification: justification.trim(),
+        };
+      })
+    );
+
+    if (patientMapping?.ipp) {
+      const result = await postPatientMapping({
+        caseCode: code,
+        caseId,
+        ipp: patientMapping.ipp,
+        lastName: patientMapping.lastName,
+        firstName: patientMapping.firstName,
+      });
+      if (result.ok === false) {
+        const { reason } = result;
+        if (reason === 'not_configured') {
+          window.alert(
+            "Un IPP a été saisi mais le proxy serveur n'est pas configuré (variable PATIENT_MAPPING_UPSTREAM_URL côté hébergement). Le cas est enregistré en local uniquement."
+          );
+        } else if (reason === 'unauthorized') {
+          window.alert(
+            "Accès refusé (401). Indiquez le jeton dans Réglages → correspondance patient, puis réessayez."
+          );
+        } else {
+          window.alert(
+            "Le cas a été enregistré localement, mais la transmission vers votre base sécurisée a échoué. Vérifiez le réseau et l'endpoint upstream."
+          );
+        }
+      }
+    }
+
+    setCaseToEdit(null);
     setIsFormOpen(false);
   };
 
@@ -594,7 +668,13 @@ export default function App() {
             <button onClick={() => setIsDark(!isDark)} className="p-4 rounded-full bg-white dark:bg-slate-800 text-slate-400 border border-slate-200 dark:border-slate-700 hover:text-blue-500 transition-all shadow-sm">
               {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
             </button>
-            <button onClick={() => setIsFormOpen(true)} className="flex items-center gap-3 bg-blue-600 hover:bg-blue-700 text-white px-8 py-3.5 rounded-full font-bold text-base shadow-xl shadow-blue-500/30 active:scale-95 transition-all">
+            <button
+              onClick={() => {
+                setCaseToEdit(null);
+                setIsFormOpen(true);
+              }}
+              className="flex items-center gap-3 bg-blue-600 hover:bg-blue-700 text-white px-8 py-3.5 rounded-full font-bold text-base shadow-xl shadow-blue-500/30 active:scale-95 transition-all"
+            >
               <Plus className="w-5 h-5" />
               <span>Nouveau Dossier</span>
             </button>
@@ -773,6 +853,20 @@ export default function App() {
                            <button onClick={(e) => { e.stopPropagation(); toggleFavorite(c.id); }} className={`p-3 rounded-2xl transition-all ${isFavorite ? 'bg-yellow-400/15 text-yellow-500' : 'text-slate-300 hover:text-slate-900 dark:hover:text-white'}`}>
                              <Star className={`w-5 h-5 ${isFavorite ? 'fill-yellow-400' : ''}`} />
                            </button>
+                           {canEditCase(session, c) && (
+                             <button
+                               type="button"
+                               title="Modifier ce cas (auteur)"
+                               onClick={(e) => {
+                                 e.stopPropagation();
+                                 setCaseToEdit(c);
+                                 setIsFormOpen(true);
+                               }}
+                               className="p-3 text-slate-300 hover:text-amber-600 dark:hover:text-amber-400 rounded-2xl transition-all"
+                             >
+                               <Pencil className="w-5 h-5" />
+                             </button>
+                           )}
                            <button onClick={(e) => deleteCase(e, c.id)} className="p-3 text-slate-300 hover:text-rose-600 rounded-2xl transition-all">
                              <Trash2 className="w-5 h-5" />
                            </button>
@@ -795,9 +889,24 @@ export default function App() {
                                 <h4 className="text-xs font-black text-slate-400 uppercase tracking-[0.4em] mb-6">Contexte Clinique</h4>
                                 <p className="text-base text-slate-500 dark:text-slate-400 leading-loose font-light px-2">{c.clinicalNote}</p>
                               </div>
-                              <div className="flex gap-6 pt-6">
-
-                              </div>
+                              {(c.lastModifiedAt || c.lastEditJustification) && (
+                                <div className="rounded-2xl border border-amber-200/80 dark:border-amber-900/50 bg-amber-50/50 dark:bg-amber-950/30 px-6 py-4 text-sm text-amber-900 dark:text-amber-100/90">
+                                  <p className="text-[10px] font-black uppercase tracking-widest text-amber-700 dark:text-amber-400 mb-2">
+                                    Dernière modification
+                                  </p>
+                                  {c.lastModifiedAt && (
+                                    <p className="text-xs text-amber-800/80 dark:text-amber-200/80 mb-2">
+                                      {new Date(c.lastModifiedAt).toLocaleString('fr-FR')}
+                                    </p>
+                                  )}
+                                  {c.lastEditJustification && (
+                                    <p className="leading-relaxed">
+                                      <span className="font-semibold">Justification : </span>
+                                      {c.lastEditJustification}
+                                    </p>
+                                  )}
+                                </div>
+                              )}
                             </div>
                             <div className="lg:col-span-7">
                                <MedicalStackViewer series={c.series || []} />
@@ -883,9 +992,16 @@ export default function App() {
 
       {isFormOpen && (
         <CaseForm
+          key={caseToEdit?.id ?? 'new'}
+          mode={caseToEdit ? 'edit' : 'create'}
+          caseToEdit={caseToEdit ?? undefined}
           nextCaseCode={getNextCaseCode(cases)}
           onSave={handleAddCase}
-          onClose={() => setIsFormOpen(false)}
+          onUpdate={handleUpdateCase}
+          onClose={() => {
+            setIsFormOpen(false);
+            setCaseToEdit(null);
+          }}
           isDark={isDark}
         />
       )}
