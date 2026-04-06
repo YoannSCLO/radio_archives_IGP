@@ -3,8 +3,13 @@
  * pour éviter les échecs de chargement de module sur Vercel (serverless).
  */
 
+/** True si une base PostgreSQL est configurée (comptes persistants, inscription). */
+export function hasDatabaseUrl(): boolean {
+  return !!process.env.DATABASE_URL?.trim();
+}
+
 export function isMultiUserMode(): boolean {
-  if (process.env.DATABASE_URL?.trim()) return true;
+  if (hasDatabaseUrl()) return true;
   const allow = process.env.ALLOW_PUBLIC_REGISTRATION?.trim().toLowerCase();
   return allow === "true" || allow === "1" || allow === "yes";
 }

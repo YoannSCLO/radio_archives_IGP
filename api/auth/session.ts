@@ -3,7 +3,10 @@ import {
   getUserFromCookieHeader,
   isAuthConfigured,
 } from "../../server/authCore";
-import { isAllowPublicRegistration, isMultiUserMode } from "../../server/authEnv";
+import {
+  hasDatabaseUrl,
+  isAllowPublicRegistration,
+} from "../../server/authEnv";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET") {
@@ -21,7 +24,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const user = getUserFromCookieHeader(req.headers.cookie);
-  const multiUser = isMultiUserMode();
+  /** Pour l’UI : « multi-utilisateurs » = Postgres disponible (sinon pas d’inscription possible). */
+  const multiUser = hasDatabaseUrl();
   const allowPublicRegistration = isAllowPublicRegistration();
   const registrationHint =
     allowPublicRegistration && !multiUser

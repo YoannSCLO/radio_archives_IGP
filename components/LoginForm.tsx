@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useId, useState } from 'react';
 import { LayoutDashboard } from 'lucide-react';
 import { login } from '../services/authService';
+import { PasswordInputWithToggle } from './PasswordInputWithToggle';
 
 interface LoginFormProps {
   onSuccess: () => void;
@@ -19,6 +20,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
 }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const passwordFieldId = useId();
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -94,15 +96,19 @@ export const LoginForm: React.FC<LoginFormProps> = ({
             />
           </div>
           <div>
-            <label className={`block text-[11px] font-bold uppercase tracking-widest mb-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+            <label
+              htmlFor={passwordFieldId}
+              className={`block text-[11px] font-bold uppercase tracking-widest mb-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}
+            >
               Mot de passe
             </label>
-            <input
-              type="password"
-              autoComplete="current-password"
+            <PasswordInputWithToggle
+              id={passwordFieldId}
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className={inputClass}
+              onChange={setPassword}
+              autoComplete="current-password"
+              inputClass={inputClass}
+              isDark={isDark}
               required
             />
           </div>

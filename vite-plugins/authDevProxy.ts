@@ -10,7 +10,7 @@ import {
   getUserFromCookieHeader,
   isAuthConfigured,
 } from "../server/authCore";
-import { isAllowPublicRegistration, isMultiUserMode } from "../server/authEnv";
+import { hasDatabaseUrl, isAllowPublicRegistration } from "../server/authEnv";
 import { pathWithoutViteBase } from "./viteBasePath";
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -54,7 +54,7 @@ function installAuthApiMiddleware(middlewares: Connect.Server, viteBase: string)
             return;
           }
           const user = getUserFromCookieHeader(req.headers.cookie);
-          const multiUser = isMultiUserMode();
+          const multiUser = hasDatabaseUrl();
           const allowPublicRegistration = isAllowPublicRegistration();
           const registrationHint =
             allowPublicRegistration && !multiUser
