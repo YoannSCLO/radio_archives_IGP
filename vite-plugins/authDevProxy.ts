@@ -4,13 +4,13 @@ import {
   authLoginResult,
   authRegisterResult,
   authAdminCreateUserResult,
-} from "../lib/authActions";
+} from "../lib/authActions.js";
 import {
   buildClearSessionCookie,
   getUserFromCookieHeader,
   isAuthConfigured,
-} from "../lib/authCore";
-import { hasDatabaseUrl, isAllowPublicRegistration } from "../lib/authEnv";
+} from "../lib/authCore.js";
+import { hasDatabaseUrl, isAllowPublicRegistration } from "../lib/authEnv.js";
 import { pathWithoutViteBase } from "./viteBasePath";
 
 function readBody(req: IncomingMessage): Promise<string> {

@@ -4,9 +4,9 @@ import {
   isAuthConfigured,
   signSessionToken,
   verifyCredentials,
-} from "./authCore";
-import { createUser } from "./usersRepo";
-import { isMultiUserMode } from "./db";
+} from "./authCore.js";
+import { createUser } from "./usersRepo.js";
+import { isMultiUserMode } from "./db.js";
 
 export type LoginResult =
   | { ok: true; setCookie: string }

@@ -2,11 +2,11 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import {
   getUserFromCookieHeader,
   isAuthConfigured,
-} from "../../lib/authCore";
+} from "../../lib/authCore.js";
 import {
   hasDatabaseUrl,
   isAllowPublicRegistration,
-} from "../../lib/authEnv";
+} from "../../lib/authEnv.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET") {

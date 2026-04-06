@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { buildClearSessionCookie } from "../../lib/authCore";
+import { buildClearSessionCookie } from "../../lib/authCore.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {

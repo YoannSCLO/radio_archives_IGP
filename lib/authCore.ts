@@ -1,8 +1,8 @@
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
-import { isMultiUserMode } from "./authEnv";
-import { ensureUsersTable } from "./db";
-import { findUserByEmail } from "./usersRepo";
+import { isMultiUserMode } from "./authEnv.js";
+import { ensureUsersTable } from "./db.js";
+import { findUserByEmail } from "./usersRepo.js";
 
 export const SESSION_COOKIE_NAME = "ra_session";
 
@@ -24,7 +24,7 @@ export function isAuthConfigured(): boolean {
   return !!(process.env.AUTH_USERNAME?.trim() && getStoredBcryptHash());
 }
 
-export { isAllowPublicRegistration } from "./authEnv";
+export { isAllowPublicRegistration } from "./authEnv.js";
 
 function getJwtSecret(): string {
   const s = process.env.AUTH_SESSION_SECRET?.trim();

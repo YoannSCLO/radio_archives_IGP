@@ -1,7 +1,7 @@
 import bcrypt from "bcryptjs";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { getSql, ensureUsersTable } from "./db";
+import { getSql, ensureUsersTable } from "./db.js";
 
 type LocalUser = { email: string; password_hash: string };
 

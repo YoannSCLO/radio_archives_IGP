@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 
-export { isMultiUserMode } from "./authEnv";
+export { isMultiUserMode } from "./authEnv.js";
 
 const require = createRequire(import.meta.url);
 
