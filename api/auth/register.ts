@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { authRegisterResult } from "../../server/authActions";
+import { authRegisterResult } from "../lib/authActions";
 
 function parseBody(req: VercelRequest): { email?: string; password?: string } {
   const raw = req.body;

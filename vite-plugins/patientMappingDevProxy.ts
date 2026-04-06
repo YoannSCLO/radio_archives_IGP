@@ -5,9 +5,9 @@ import {
   getPatientMappingProxyConfigured,
   isMtlsUpstreamConfigured,
   validatePatientMappingBody,
-} from "../server/forwardPatientMapping";
-import { checkInboundAuth, isInboundAuthConfigured } from "../server/patientMappingAuth";
-import { getUserFromCookieHeader, isAuthConfigured } from "../server/authCore";
+} from "../api/lib/forwardPatientMapping";
+import { checkInboundAuth, isInboundAuthConfigured } from "../api/lib/patientMappingAuth";
+import { getUserFromCookieHeader, isAuthConfigured } from "../api/lib/authCore";
 import { pathWithoutViteBase } from "./viteBasePath";
 
 function readBody(req: IncomingMessage): Promise<string> {

@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { authAdminCreateUserResult } from "../../server/authActions";
+import { authAdminCreateUserResult } from "../lib/authActions";
 
 function getHeader(req: VercelRequest, name: string): string | undefined {
   const n = name.toLowerCase();
