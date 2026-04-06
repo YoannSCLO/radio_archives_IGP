@@ -4,9 +4,9 @@ import {
   getPatientMappingProxyConfigured,
   isMtlsUpstreamConfigured,
   validatePatientMappingBody,
-} from "./lib/forwardPatientMapping";
-import { checkInboundAuth, isInboundAuthConfigured } from "./lib/patientMappingAuth";
-import { assertAuthenticated } from "./lib/authCore";
+} from "../lib/forwardPatientMapping";
+import { checkInboundAuth, isInboundAuthConfigured } from "../lib/patientMappingAuth";
+import { assertAuthenticated } from "../lib/authCore";
 
 function parseBody(req: VercelRequest): unknown {
   const raw = req.body;
