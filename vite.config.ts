@@ -3,6 +3,7 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { patientMappingDevProxyPlugin } from './vite-plugins/patientMappingDevProxy';
 import { authDevProxyPlugin } from './vite-plugins/authDevProxy';
+import { casesDevProxyPlugin } from './vite-plugins/casesDevProxy';
 
 /** Sous-chemin public (DNS interne), ex. `/radio-archive/` — les appels API utilisent le même préfixe. */
 function normalizeViteBase(fromEnv: string | undefined): string {
@@ -37,7 +38,7 @@ export default defineConfig(({ mode }) => {
         port: 3000,
         host: '0.0.0.0',
       },
-      plugins: [react(), authDevProxyPlugin(), patientMappingDevProxyPlugin()],
+      plugins: [react(), authDevProxyPlugin(), patientMappingDevProxyPlugin(), casesDevProxyPlugin()],
       resolve: {
         alias: {
           '@': path.resolve(__dirname, '.'),

@@ -9,6 +9,12 @@ import { RegisterForm } from './components/RegisterForm';
 import { semanticSearch } from './services/geminiService';
 import { postPatientMapping, getStoredInboundToken, setStoredInboundToken } from './services/patientMappingService';
 import { fetchSession, logout as authLogout, type SessionInfo } from './services/authService';
+import {
+  createCaseOnServer,
+  deleteCaseOnServer,
+  fetchCasesFromServer,
+  updateCaseOnServer,
+} from './services/casesApi';
 import { 
   Plus, 
   Search, 
@@ -343,6 +349,8 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [caseToEdit, setCaseToEdit] = useState<RadioCase | null>(null);
+  /** `server` = base PostgreSQL partagée ; `local` = navigateur uniquement. */
+  const [casesStorage, setCasesStorage] = useState<'server' | 'local'>('local');
   const [isStatsOpen, setIsStatsOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [inboundTokenDraft, setInboundTokenDraft] = useState('');
@@ -396,17 +404,46 @@ export default function App() {
   }, [isDark]);
 
   useEffect(() => {
-    const saved = localStorage.getItem('radio_cases');
-    const initialData = migrateLoadedCases(saved ? JSON.parse(saved) : []);
-    setCases(initialData);
-    isInitialMount.current = false;
+    let cancelled = false;
+    void (async () => {
+      const remote = await fetchCasesFromServer();
+      if (cancelled) return;
+      if (remote !== null) {
+        setCases(remote);
+        setCasesStorage('server');
+        isInitialMount.current = false;
+        return;
+      }
+      const saved = localStorage.getItem('radio_cases');
+      setCases(migrateLoadedCases(saved ? JSON.parse(saved) : []));
+      setCasesStorage('local');
+      isInitialMount.current = false;
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
+  /** Après connexion, basculer sur la base partagée si disponible. */
   useEffect(() => {
-    if (!isInitialMount.current) {
+    if (!session || !session.authRequired || !session.authenticated) return;
+    let cancelled = false;
+    void (async () => {
+      const remote = await fetchCasesFromServer();
+      if (cancelled || remote === null) return;
+      setCases(remote);
+      setCasesStorage('server');
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
+
+  useEffect(() => {
+    if (!isInitialMount.current && casesStorage === 'local') {
       localStorage.setItem('radio_cases', JSON.stringify(cases));
     }
-  }, [cases]);
+  }, [cases, casesStorage]);
 
   const searchMatchedCases = useMemo(() => {
     return cases.filter(c => {
@@ -488,6 +525,44 @@ export default function App() {
     data: Omit<RadioCase, 'id' | 'dateAdded' | 'caseCode' | 'authorEmail' | 'lastModifiedAt' | 'lastEditJustification'>,
     patientMapping?: { ipp: string; lastName?: string; firstName?: string } | null
   ) => {
+    if (casesStorage === 'server') {
+      const created = await createCaseOnServer(data);
+      if (!created) {
+        window.alert(
+          "Enregistrement sur le serveur impossible (vérifiez DATABASE_URL, la connexion et que vous êtes connecté si l’auth est activée)."
+        );
+        return;
+      }
+      setCases((prev) => [created, ...prev]);
+      if (patientMapping?.ipp) {
+        const result = await postPatientMapping({
+          caseCode: created.caseCode,
+          caseId: created.id,
+          ipp: patientMapping.ipp,
+          lastName: patientMapping.lastName,
+          firstName: patientMapping.firstName,
+        });
+        if (result.ok === false) {
+          const { reason } = result;
+          if (reason === "not_configured") {
+            window.alert(
+              "Un IPP a été saisi mais le proxy serveur n'est pas configuré (variable PATIENT_MAPPING_UPSTREAM_URL côté hébergement). Le cas est enregistré sur le serveur mais la correspondance patient n'a pas été transmise."
+            );
+          } else if (reason === "unauthorized") {
+            window.alert(
+              "Accès refusé (401). Indiquez le jeton dans Réglages → correspondance patient, puis réessayez."
+            );
+          } else {
+            window.alert(
+              "La correspondance patient n'a pas été transmise. Vérifiez le réseau et l'endpoint upstream."
+            );
+          }
+        }
+      }
+      setIsFormOpen(false);
+      return;
+    }
+
     let nextCode = '';
     let newId = '';
     const authorEmail =
@@ -546,6 +621,56 @@ export default function App() {
     justification: string,
     patientMapping?: { ipp: string; lastName?: string; firstName?: string } | null
   ) => {
+    if (casesStorage === 'server') {
+      const updated = await updateCaseOnServer(
+        caseId,
+        {
+          specialty: data.specialty,
+          difficulty: data.difficulty,
+          modality: data.modality,
+          clinicalNote: data.clinicalNote,
+          diagnosis: data.diagnosis,
+          series: data.series,
+        },
+        justification
+      );
+      if (!updated) {
+        window.alert(
+          "Mise à jour serveur impossible (droits, justification ou connexion). Réessayez après vérification."
+        );
+        return;
+      }
+      setCases((prev) => prev.map((c) => (c.id === caseId ? updated : c)));
+      if (patientMapping?.ipp) {
+        const result = await postPatientMapping({
+          caseCode: updated.caseCode,
+          caseId,
+          ipp: patientMapping.ipp,
+          lastName: patientMapping.lastName,
+          firstName: patientMapping.firstName,
+        });
+        if (result.ok === false) {
+          const { reason } = result;
+          if (reason === 'not_configured') {
+            window.alert(
+              "Un IPP a été saisi mais le proxy serveur n'est pas configuré (variable PATIENT_MAPPING_UPSTREAM_URL côté hébergement)."
+            );
+          } else if (reason === 'unauthorized') {
+            window.alert(
+              "Accès refusé (401). Indiquez le jeton dans Réglages → correspondance patient, puis réessayez."
+            );
+          } else {
+            window.alert(
+              "La correspondance patient n'a pas été transmise. Vérifiez le réseau et l'endpoint upstream."
+            );
+          }
+        }
+      }
+      setCaseToEdit(null);
+      setIsFormOpen(false);
+      return;
+    }
+
     let code = '';
     setCases((prev) =>
       prev.map((c) => {
@@ -594,13 +719,19 @@ export default function App() {
     setIsFormOpen(false);
   };
 
-  const deleteCase = (e: React.MouseEvent, id: string) => {
+  const deleteCase = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (window.confirm('Supprimer définitivement ce cas ?')) {
-      setCases(prev => prev.filter(c => c.id !== id));
-      setFavorites(prev => prev.filter(fid => fid !== id));
-      if (expandedCaseId === id) setExpandedCaseId(null);
+    if (!window.confirm('Supprimer définitivement ce cas ?')) return;
+    if (casesStorage === 'server') {
+      const ok = await deleteCaseOnServer(id);
+      if (!ok) {
+        window.alert('Suppression serveur impossible (droits ou connexion).');
+        return;
+      }
     }
+    setCases((prev) => prev.filter((c) => c.id !== id));
+    setFavorites((prev) => prev.filter((fid) => fid !== id));
+    if (expandedCaseId === id) setExpandedCaseId(null);
   };
 
   const handleAuthLogout = async () => {
