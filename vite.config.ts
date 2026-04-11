@@ -15,7 +15,13 @@ function normalizeViteBase(fromEnv: string | undefined): string {
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
-    const passThrough = ['DATABASE_URL', 'ALLOW_PUBLIC_REGISTRATION', 'AUTH_ADMIN_SECRET'];
+    /** Variables copiées vers `process.env` pour les plugins / outils Node (pas injectées dans le bundle client). */
+    const passThrough = [
+      'DATABASE_URL',
+      'ALLOW_PUBLIC_REGISTRATION',
+      'AUTH_ADMIN_SECRET',
+      'GEMINI_API_KEY',
+    ];
     for (const key of Object.keys(env)) {
       if (
         key.startsWith('PATIENT_MAPPING_') ||
@@ -32,10 +38,6 @@ export default defineConfig(({ mode }) => {
         host: '0.0.0.0',
       },
       plugins: [react(), authDevProxyPlugin(), patientMappingDevProxyPlugin()],
-      define: {
-        'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
-      },
       resolve: {
         alias: {
           '@': path.resolve(__dirname, '.'),
