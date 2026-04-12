@@ -9,17 +9,21 @@ function getHeader(req: VercelRequest, name: string): string | undefined {
   return undefined;
 }
 
-function parseBody(req: VercelRequest): { email?: string; password?: string } {
+function parseBody(req: VercelRequest): {
+  email?: string;
+  password?: string;
+  isAdmin?: boolean;
+} {
   const raw = req.body;
   if (raw == null) return {};
   if (typeof raw === "string") {
     try {
-      return JSON.parse(raw) as { email?: string; password?: string };
+      return JSON.parse(raw) as { email?: string; password?: string; isAdmin?: boolean };
     } catch {
       return {};
     }
   }
-  if (typeof raw === "object") return raw as { email?: string; password?: string };
+  if (typeof raw === "object") return raw as { email?: string; password?: string; isAdmin?: boolean };
   return {};
 }
 
@@ -30,12 +34,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const secret = getHeader(req, "x-admin-secret");
-  const { email, password } = parseBody(req);
+  const { email, password, isAdmin } = parseBody(req);
   if (typeof email !== "string" || typeof password !== "string") {
     return res.status(400).json({ error: "Invalid body" });
   }
 
-  const result = await authAdminCreateUserResult(email, password, secret);
+  const result = await authAdminCreateUserResult(email, password, secret, {
+    isAdmin: isAdmin === true,
+  });
   if (!result.ok) {
     return res.status(result.status).json(result.body);
   }

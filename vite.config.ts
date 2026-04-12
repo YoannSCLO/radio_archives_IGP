@@ -22,11 +22,14 @@ export default defineConfig(({ mode }) => {
       'ALLOW_PUBLIC_REGISTRATION',
       'AUTH_ADMIN_SECRET',
       'GEMINI_API_KEY',
+      'PUBLIC_APP_URL',
+      'VERCEL_URL',
     ];
     for (const key of Object.keys(env)) {
       if (
         key.startsWith('PATIENT_MAPPING_') ||
         key.startsWith('AUTH_') ||
+        key.startsWith('RESEND_') ||
         passThrough.includes(key)
       ) {
         process.env[key] = env[key];

@@ -7,6 +7,7 @@ import {
   hasDatabaseUrl,
   isAllowPublicRegistration,
 } from "../../lib/authEnv.js";
+import { getUserAuthFlags } from "../../lib/usersRepo.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET") {
@@ -34,12 +35,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         ? "Pour afficher « Créer un compte », définissez ALLOW_PUBLIC_REGISTRATION=true (sinon création des comptes par l’API admin uniquement)."
         : undefined;
 
+  let isAdmin = false;
+  if (user && multiUser) {
+    const flags = await getUserAuthFlags(user);
+    isAdmin = flags?.is_admin === true;
+  }
+
   return res.status(200).json({
     authenticated: !!user,
     authRequired: true,
     username: user ?? undefined,
     multiUser,
     allowPublicRegistration,
+    registrationRequiresAdminApproval: allowPublicRegistration && multiUser,
     registrationHint,
+    isAdmin,
   });
 }

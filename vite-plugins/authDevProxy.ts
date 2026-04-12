@@ -5,12 +5,19 @@ import {
   authRegisterResult,
   authAdminCreateUserResult,
 } from "../lib/authActions.js";
+import { requireAdminSession } from "../lib/authAdminSession.js";
+import {
+  approveUserByEmail,
+  getUserAuthFlags,
+  listPendingEmails,
+} from "../lib/usersRepo.js";
 import {
   buildClearSessionCookie,
   getUserFromCookieHeader,
   isAuthConfigured,
 } from "../lib/authCore.js";
 import { hasDatabaseUrl, isAllowPublicRegistration } from "../lib/authEnv.js";
+import { handleApproveByLinkGet } from "../lib/approveByLinkHttp.js";
 import { pathWithoutViteBase } from "./viteBasePath";
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -62,6 +69,11 @@ function installAuthApiMiddleware(middlewares: Connect.Server, viteBase: string)
               : multiUser && !allowPublicRegistration
                 ? "Pour afficher « Créer un compte », définissez ALLOW_PUBLIC_REGISTRATION=true (sinon création des comptes par l’API admin uniquement)."
                 : undefined;
+          let isAdmin = false;
+          if (user && multiUser) {
+            const flags = await getUserAuthFlags(user);
+            isAdmin = flags?.is_admin === true;
+          }
           r.setHeader("Content-Type", "application/json");
           r.end(
             JSON.stringify({
@@ -70,7 +82,9 @@ function installAuthApiMiddleware(middlewares: Connect.Server, viteBase: string)
               username: user ?? undefined,
               multiUser,
               allowPublicRegistration,
+              registrationRequiresAdminApproval: allowPublicRegistration && multiUser,
               registrationHint,
+              isAdmin,
             })
           );
           return;
@@ -150,9 +164,8 @@ function installAuthApiMiddleware(middlewares: Connect.Server, viteBase: string)
             r.end(JSON.stringify(result.body));
             return;
           }
-          r.setHeader("Set-Cookie", result.setCookie);
           r.setHeader("Content-Type", "application/json");
-          r.end(JSON.stringify({ ok: true }));
+          r.end(JSON.stringify({ ok: true, pendingApproval: true }));
           return;
         }
 
@@ -166,7 +179,7 @@ function installAuthApiMiddleware(middlewares: Connect.Server, viteBase: string)
             r.end();
             return;
           }
-          let body: { email?: string; password?: string };
+          let body: { email?: string; password?: string; isAdmin?: boolean };
           try {
             body = raw ? JSON.parse(raw) : {};
           } catch {
@@ -184,7 +197,8 @@ function installAuthApiMiddleware(middlewares: Connect.Server, viteBase: string)
           const result = await authAdminCreateUserResult(
             body.email,
             body.password,
-            secret
+            secret,
+            { isAdmin: body.isAdmin === true }
           );
           if (!result.ok) {
             r.statusCode = result.status;
@@ -195,6 +209,75 @@ function installAuthApiMiddleware(middlewares: Connect.Server, viteBase: string)
           r.statusCode = 201;
           r.setHeader("Content-Type", "application/json");
           r.end(JSON.stringify({ ok: true }));
+          return;
+        }
+
+        if (path === "/api/auth/pending-registrations" && req.method === "GET") {
+          const gate = await requireAdminSession(req.headers.cookie);
+          if (!gate.ok) {
+            r.statusCode = gate.status;
+            r.setHeader("Content-Type", "application/json");
+            r.end(JSON.stringify(gate.body));
+            return;
+          }
+          const emails = await listPendingEmails();
+          r.setHeader("Content-Type", "application/json");
+          r.end(JSON.stringify({ emails }));
+          return;
+        }
+
+        if (path === "/api/auth/approve-registration" && req.method === "POST") {
+          let raw: string;
+          try {
+            raw = await readBody(req as IncomingMessage);
+          } catch {
+            r.statusCode = 400;
+            r.end();
+            return;
+          }
+          let body: { email?: string };
+          try {
+            body = raw ? JSON.parse(raw) : {};
+          } catch {
+            r.statusCode = 400;
+            r.setHeader("Content-Type", "application/json");
+            r.end(JSON.stringify({ error: "Invalid JSON" }));
+            return;
+          }
+          const gate = await requireAdminSession(req.headers.cookie);
+          if (!gate.ok) {
+            r.statusCode = gate.status;
+            r.setHeader("Content-Type", "application/json");
+            r.end(JSON.stringify(gate.body));
+            return;
+          }
+          if (typeof body.email !== "string" || !body.email.trim()) {
+            r.statusCode = 400;
+            r.setHeader("Content-Type", "application/json");
+            r.end(JSON.stringify({ error: "Invalid body" }));
+            return;
+          }
+          const approved = await approveUserByEmail(body.email.trim());
+          if (!approved) {
+            r.statusCode = 404;
+            r.setHeader("Content-Type", "application/json");
+            r.end(
+              JSON.stringify({ error: "Aucune demande en attente pour cet e-mail" })
+            );
+            return;
+          }
+          r.setHeader("Content-Type", "application/json");
+          r.end(JSON.stringify({ ok: true }));
+          return;
+        }
+
+        if (path === "/api/auth/approve-by-link" && req.method === "GET") {
+          const host = req.headers.host ?? "localhost";
+          const url = new URL(req.url ?? "/", `http://${host}`);
+          const result = await handleApproveByLinkGet(url.searchParams);
+          r.statusCode = result.status;
+          r.setHeader("Content-Type", "text/html; charset=utf-8");
+          r.end(result.html);
           return;
         }
 

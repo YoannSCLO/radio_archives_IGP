@@ -13,6 +13,10 @@ export type SessionInfo =
       username?: string;
       multiUser: boolean;
       allowPublicRegistration: boolean;
+      /** Inscription publique + Postgres : la demande doit être validée par un admin. */
+      registrationRequiresAdminApproval?: boolean;
+      /** Compte connecté avec rôle administrateur (validation des inscriptions). */
+      isAdmin?: boolean;
       /** Présent si la config incite à l’inscription mais qu’il manque PostgreSQL. */
       registrationHint?: string;
     };
@@ -42,26 +46,60 @@ export async function fetchSession(): Promise<SessionInfo> {
   return res.json() as Promise<SessionInfo>;
 }
 
-export async function login(username: string, password: string): Promise<boolean> {
+export type LoginOutcome = "ok" | "invalid" | "pending";
+
+export async function login(username: string, password: string): Promise<LoginOutcome> {
   const res = await fetch(apiUrl("api/auth/login"), {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),
   });
-  return res.ok;
+  if (res.ok) return "ok";
+  let code: string | undefined;
+  try {
+    const j = (await res.json()) as { code?: string };
+    code = j.code;
+  } catch {
+    /* ignore */
+  }
+  if (res.status === 403 && code === "pending_approval") return "pending";
+  return "invalid";
 }
 
-export async function register(email: string, password: string): Promise<boolean> {
+export type RegisterOutcome = "success" | "duplicate" | "error";
+
+export async function register(email: string, password: string): Promise<RegisterOutcome> {
   const res = await fetch(apiUrl("api/auth/register"), {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
   });
-  return res.ok;
+  if (res.status === 201) return "success";
+  if (res.status === 409) return "duplicate";
+  return "error";
 }
 
 export async function logout(): Promise<void> {
   await fetch(apiUrl("api/auth/logout"), { method: "POST", credentials: "include" });
+}
+
+export async function fetchPendingRegistrations(): Promise<string[] | null> {
+  const res = await fetch(apiUrl("api/auth/pending-registrations"), {
+    credentials: "include",
+  });
+  if (!res.ok) return null;
+  const j = (await res.json()) as { emails?: string[] };
+  return Array.isArray(j.emails) ? j.emails : null;
+}
+
+export async function approveRegistration(email: string): Promise<boolean> {
+  const res = await fetch(apiUrl("api/auth/approve-registration"), {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  return res.ok;
 }

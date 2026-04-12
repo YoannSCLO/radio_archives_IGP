@@ -29,6 +29,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!result.ok) {
     return res.status(result.status).json(result.body);
   }
-  res.setHeader("Set-Cookie", result.setCookie);
-  return res.status(201).json({ ok: true });
+  return res.status(201).json({ ok: true, pendingApproval: true });
 }

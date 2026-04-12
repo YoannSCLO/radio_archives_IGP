@@ -29,9 +29,15 @@ export const LoginForm: React.FC<LoginFormProps> = ({
     setError('');
     setLoading(true);
     try {
-      const ok = await login(username, password);
-      if (ok) onSuccess();
-      else setError('Identifiant ou mot de passe incorrect.');
+      const out = await login(username, password);
+      if (out === "ok") onSuccess();
+      else if (out === "pending") {
+        setError(
+          "Votre compte est en attente de validation par un administrateur. Vous ne pouvez pas encore vous connecter."
+        );
+      } else {
+        setError("Identifiant ou mot de passe incorrect.");
+      }
     } catch {
       setError('Connexion impossible. Réessayez.');
     } finally {

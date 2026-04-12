@@ -1,10 +1,11 @@
 import {
+  authenticateUser,
   buildSessionCookie,
   isAllowPublicRegistration,
   isAuthConfigured,
   signSessionToken,
-  verifyCredentials,
 } from "./authCore.js";
+import { notifyAdminPendingRegistration } from "./notifyAdminPendingRegistration.js";
 import { createUser } from "./usersRepo.js";
 import { isMultiUserMode } from "./db.js";
 
@@ -23,9 +24,20 @@ export async function authLoginResult(
       body: { error: "Authentication not configured" },
     };
   }
-  const valid = await verifyCredentials(username, password);
-  if (!valid) {
+  const auth = await authenticateUser(username, password);
+  if (auth === "invalid") {
     return { ok: false, status: 401, body: { error: "Invalid credentials" } };
+  }
+  if (auth === "pending") {
+    return {
+      ok: false,
+      status: 403,
+      body: {
+        error:
+          "Compte en attente de validation par un administrateur. Vous recevrez l’accès une fois votre demande acceptée.",
+        code: "pending_approval",
+      },
+    };
   }
   const sub = isMultiUserMode()
     ? username.trim().toLowerCase()
@@ -34,7 +46,9 @@ export async function authLoginResult(
   return { ok: true, setCookie: buildSessionCookie(token, 7 * 24 * 3600) };
 }
 
-export type RegisterResult = LoginResult;
+export type RegisterResult =
+  | { ok: true; pendingApproval: true }
+  | { ok: false; status: number; body: Record<string, unknown> };
 
 export async function authRegisterResult(
   email: string,
@@ -72,7 +86,7 @@ export async function authRegisterResult(
       body: { error: "Password must be at least 8 characters" },
     };
   }
-  const r = await createUser(em, password);
+  const r = await createUser(em, password, { approved: false });
   if (!r.ok) {
     if (r.reason === "duplicate") {
       return {
@@ -83,8 +97,12 @@ export async function authRegisterResult(
     }
     return { ok: false, status: 500, body: { error: "Could not create account" } };
   }
-  const token = signSessionToken(em);
-  return { ok: true, setCookie: buildSessionCookie(token, 7 * 24 * 3600) };
+  try {
+    await notifyAdminPendingRegistration(em);
+  } catch (e) {
+    console.error("notifyAdminPendingRegistration", e);
+  }
+  return { ok: true, pendingApproval: true };
 }
 
 export type AdminCreateResult =
@@ -94,7 +112,8 @@ export type AdminCreateResult =
 export async function authAdminCreateUserResult(
   email: string,
   password: string,
-  adminSecret: string | undefined
+  adminSecret: string | undefined,
+  options?: { isAdmin?: boolean }
 ): Promise<AdminCreateResult> {
   const expected = process.env.AUTH_ADMIN_SECRET?.trim();
   if (!expected || adminSecret !== expected) {
@@ -118,7 +137,10 @@ export async function authAdminCreateUserResult(
       body: { error: "Password must be at least 8 characters" },
     };
   }
-  const r = await createUser(em, password);
+  const r = await createUser(em, password, {
+    approved: true,
+    isAdmin: options?.isAdmin === true,
+  });
   if (!r.ok) {
     if (r.reason === "duplicate") {
       return {

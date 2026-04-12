@@ -1,7 +1,6 @@
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { isMultiUserMode } from "./authEnv.js";
-import { ensureUsersTable } from "./db.js";
 import { findUserByEmail } from "./usersRepo.js";
 
 export const SESSION_COOKIE_NAME = "ra_session";
@@ -72,22 +71,32 @@ function normalizeBcryptHash(raw: string | undefined): string | undefined {
   return h;
 }
 
+/** Connexion multi-utilisateurs : mot de passe faux, compte inexistant, ou compte pas encore validé par un admin. */
+export async function authenticateUser(
+  username: string,
+  password: string
+): Promise<"invalid" | "pending" | "ok"> {
+  if (isMultiUserMode()) {
+    const email = username.trim().toLowerCase();
+    const user = await findUserByEmail(email);
+    if (!user) return "invalid";
+    const good = await bcrypt.compare(password, user.password_hash);
+    if (!good) return "invalid";
+    if (!user.approved) return "pending";
+    return "ok";
+  }
+  const u = process.env.AUTH_USERNAME?.trim();
+  const hash = getStoredBcryptHash();
+  if (!u || !hash || !password) return "invalid";
+  if (username.trim() !== u) return "invalid";
+  return (await bcrypt.compare(password, hash)) ? "ok" : "invalid";
+}
+
 export async function verifyCredentials(
   username: string,
   password: string
 ): Promise<boolean> {
-  if (isMultiUserMode()) {
-    await ensureUsersTable();
-    const email = username.trim().toLowerCase();
-    const user = await findUserByEmail(email);
-    if (!user) return false;
-    return bcrypt.compare(password, user.password_hash);
-  }
-  const u = process.env.AUTH_USERNAME?.trim();
-  const hash = getStoredBcryptHash();
-  if (!u || !hash || !password) return false;
-  if (username.trim() !== u) return false;
-  return bcrypt.compare(password, hash);
+  return (await authenticateUser(username, password)) === "ok";
 }
 
 export function buildSessionCookie(token: string, maxAgeSec: number): string {

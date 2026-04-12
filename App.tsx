@@ -6,6 +6,7 @@ import { Badge } from './components/Badge';
 import { CaseForm } from './components/CaseForm';
 import { LoginForm } from './components/LoginForm';
 import { RegisterForm } from './components/RegisterForm';
+import { AdminPendingRegistrations } from './components/AdminPendingRegistrations';
 import { semanticSearch } from './services/geminiService';
 import { postPatientMapping, getStoredInboundToken, setStoredInboundToken } from './services/patientMappingService';
 import { fetchSession, logout as authLogout, type SessionInfo } from './services/authService';
@@ -754,7 +755,7 @@ export default function App() {
       return (
         <RegisterForm
           isDark={isDark}
-          onSuccess={() => void fetchSession().then(setSession)}
+          onRegistered={() => setAuthView('login')}
           onBack={() => setAuthView('login')}
         />
       );
@@ -814,6 +815,14 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-8 py-14">
+        {session.authRequired &&
+          session.authenticated &&
+          'isAdmin' in session &&
+          session.isAdmin && (
+            <div className="mb-10 max-w-xl">
+              <AdminPendingRegistrations isDark={isDark} />
+            </div>
+          )}
         <div className="mb-20">
           <div className="flex items-center justify-between mb-10">
             <div className="flex flex-col">

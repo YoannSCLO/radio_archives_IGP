@@ -24,19 +24,33 @@ export function getSql(): any {
   return sql;
 }
 
+/** À chaque appel (idempotent) : si AUTH_ADMIN_EMAIL est défini, ce compte est admin et validé. */
+async function applyAuthAdminEmailPromotion(s: NonNullable<ReturnType<typeof getSql>>): Promise<void> {
+  const adminEmail = process.env.AUTH_ADMIN_EMAIL?.trim().toLowerCase();
+  if (!adminEmail) return;
+  await s`
+    UPDATE app_users SET is_admin = true, approved = true
+    WHERE lower(trim(email)) = ${adminEmail}
+  `;
+}
+
 export async function ensureUsersTable(): Promise<void> {
-  if (usersTableEnsured) return;
   const s = getSql();
   if (!s) return;
-  await s`
-    CREATE TABLE IF NOT EXISTS app_users (
-      id SERIAL PRIMARY KEY,
-      email TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-  `;
-  usersTableEnsured = true;
+  if (!usersTableEnsured) {
+    await s`
+      CREATE TABLE IF NOT EXISTS app_users (
+        id SERIAL PRIMARY KEY,
+        email TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `;
+    await s`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS approved BOOLEAN NOT NULL DEFAULT true`;
+    await s`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT false`;
+    usersTableEnsured = true;
+  }
+  await applyAuthAdminEmailPromotion(s);
 }
 
 /** Cas pédagogiques fictifs partagés (sync multi-appareils). */

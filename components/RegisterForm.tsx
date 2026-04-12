@@ -1,35 +1,44 @@
 import React, { useId, useState } from 'react';
 import { LayoutDashboard } from 'lucide-react';
-import { register } from '../services/authService';
+import { register } from "../services/authService";
 import { PasswordInputWithToggle } from './PasswordInputWithToggle';
 
 interface RegisterFormProps {
-  onSuccess: () => void;
+  /** Après envoi réussi de la demande (sans connexion automatique). */
+  onRegistered: () => void;
   onBack: () => void;
   isDark: boolean;
 }
 
 export const RegisterForm: React.FC<RegisterFormProps> = ({
-  onSuccess,
+  onRegistered,
   onBack,
   isDark,
 }) => {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const passwordFieldId = useId();
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
+    setError("");
     setLoading(true);
     try {
-      const ok = await register(email, password);
-      if (ok) onSuccess();
-      else setError('Impossible de créer le compte (e-mail déjà utilisé ou mot de passe trop court).');
+      const out = await register(email, password);
+      if (out === "success") {
+        setSubmitted(true);
+        return;
+      }
+      if (out === "duplicate") {
+        setError("Cette adresse e-mail est déjà enregistrée.");
+      } else {
+        setError("Mot de passe trop court ou données invalides (8 caractères minimum).");
+      }
     } catch {
-      setError('Erreur réseau. Réessayez.');
+      setError("Erreur réseau. Réessayez.");
     } finally {
       setLoading(false);
     }
@@ -60,9 +69,25 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
         <h1 className={`text-xl font-bold text-center mb-2 ${isDark ? 'text-white' : 'text-slate-800'}`}>
           Créer un compte
         </h1>
-        <p className={`text-xs text-center mb-8 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-          Un compte distinct par utilisateur. Mot de passe : au moins 8 caractères.
+        <p className={`text-xs text-center mb-8 ${isDark ? "text-slate-400" : "text-slate-500"}`}>
+          Un administrateur validera votre demande avant que vous puissiez vous connecter. Mot de passe : au moins 8
+          caractères.
         </p>
+        {submitted ? (
+          <div className="space-y-6 text-center">
+            <p className={`text-sm ${isDark ? "text-emerald-300" : "text-emerald-700"}`}>
+              Demande enregistrée. Un administrateur validera votre compte (par e-mail ou depuis l’interface) ; vous
+              pourrez alors vous connecter.
+            </p>
+            <button
+              type="button"
+              onClick={onRegistered}
+              className="w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm transition-all"
+            >
+              Retour à la connexion
+            </button>
+          </div>
+        ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className={`block text-[11px] font-bold uppercase tracking-widest mb-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
@@ -113,6 +138,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
             ← Retour à la connexion
           </button>
         </form>
+        )}
       </div>
     </div>
   );
