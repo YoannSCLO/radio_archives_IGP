@@ -6,6 +6,7 @@ import {
 import {
   hasDatabaseUrl,
   isAllowPublicRegistration,
+  isMultiUserMode,
 } from "../../lib/authEnv.js";
 import { getUserAuthFlags } from "../../lib/usersRepo.js";
 
@@ -50,5 +51,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     registrationRequiresAdminApproval: allowPublicRegistration && multiUser,
     registrationHint,
     isAdmin,
+    /** Compte avec mot de passe modifiable (Postgres ou fichier dev), pas le mode AUTH_USERNAME seul. */
+    canChangePassword: isMultiUserMode(),
   });
 }

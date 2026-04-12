@@ -4,6 +4,7 @@ import {
   authLoginResult,
   authRegisterResult,
   authAdminCreateUserResult,
+  authChangePasswordResult,
 } from "../lib/authActions.js";
 import { requireAdminSession } from "../lib/authAdminSession.js";
 import {
@@ -16,7 +17,11 @@ import {
   getUserFromCookieHeader,
   isAuthConfigured,
 } from "../lib/authCore.js";
-import { hasDatabaseUrl, isAllowPublicRegistration } from "../lib/authEnv.js";
+import {
+  hasDatabaseUrl,
+  isAllowPublicRegistration,
+  isMultiUserMode,
+} from "../lib/authEnv.js";
 import { handleApproveByLinkGet } from "../lib/approveByLinkHttp.js";
 import { pathWithoutViteBase } from "./viteBasePath";
 
@@ -85,6 +90,7 @@ function installAuthApiMiddleware(middlewares: Connect.Server, viteBase: string)
               registrationRequiresAdminApproval: allowPublicRegistration && multiUser,
               registrationHint,
               isAdmin,
+              canChangePassword: isMultiUserMode(),
             })
           );
           return;
@@ -128,6 +134,49 @@ function installAuthApiMiddleware(middlewares: Connect.Server, viteBase: string)
             return;
           }
           r.setHeader("Set-Cookie", result.setCookie);
+          r.setHeader("Content-Type", "application/json");
+          r.end(JSON.stringify({ ok: true }));
+          return;
+        }
+
+        if (path === "/api/auth/change-password" && req.method === "POST") {
+          let raw: string;
+          try {
+            raw = await readBody(req as IncomingMessage);
+          } catch {
+            r.statusCode = 400;
+            r.end();
+            return;
+          }
+          let body: { currentPassword?: string; newPassword?: string };
+          try {
+            body = raw ? JSON.parse(raw) : {};
+          } catch {
+            r.statusCode = 400;
+            r.setHeader("Content-Type", "application/json");
+            r.end(JSON.stringify({ error: "Invalid JSON" }));
+            return;
+          }
+          if (
+            typeof body.currentPassword !== "string" ||
+            typeof body.newPassword !== "string"
+          ) {
+            r.statusCode = 400;
+            r.setHeader("Content-Type", "application/json");
+            r.end(JSON.stringify({ error: "Invalid body" }));
+            return;
+          }
+          const result = await authChangePasswordResult(
+            req.headers.cookie,
+            body.currentPassword,
+            body.newPassword
+          );
+          if (!result.ok) {
+            r.statusCode = result.status;
+            r.setHeader("Content-Type", "application/json");
+            r.end(JSON.stringify(result.body));
+            return;
+          }
           r.setHeader("Content-Type", "application/json");
           r.end(JSON.stringify({ ok: true }));
           return;

@@ -17,6 +17,8 @@ export type SessionInfo =
       registrationRequiresAdminApproval?: boolean;
       /** Compte connecté avec rôle administrateur (validation des inscriptions). */
       isAdmin?: boolean;
+      /** Mot de passe modifiable via l’app (comptes en base / fichier dev), pas le mode compte unique .env seul. */
+      canChangePassword?: boolean;
       /** Présent si la config incite à l’inscription mais qu’il manque PostgreSQL. */
       registrationHint?: string;
     };
@@ -102,4 +104,32 @@ export async function approveRegistration(email: string): Promise<boolean> {
     body: JSON.stringify({ email }),
   });
   return res.ok;
+}
+
+export type ChangePasswordOutcome = "ok" | "wrong" | "weak" | "error" | "single_user";
+
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string
+): Promise<ChangePasswordOutcome> {
+  const res = await fetch(apiUrl("api/auth/change-password"), {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+  if (res.ok) return "ok";
+  let code: string | undefined;
+  let err = "";
+  try {
+    const j = (await res.json()) as { code?: string; error?: string };
+    code = j.code;
+    err = typeof j.error === "string" ? j.error : "";
+  } catch {
+    /* ignore */
+  }
+  if (res.status === 403) return "wrong";
+  if (res.status === 400 && code === "single_user_mode") return "single_user";
+  if (res.status === 400 && /8 caractères|au moins 8/i.test(err)) return "weak";
+  return "error";
 }

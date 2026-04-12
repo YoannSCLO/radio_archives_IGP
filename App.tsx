@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useId } from 'react';
 import { Specialty, Difficulty, Modality, RadioCase, ImageSeries } from './types';
 import { SPECIALTY_MAP, DIFFICULTY_MAP } from './constants';
 import { Badge } from './components/Badge';
@@ -7,9 +7,15 @@ import { CaseForm } from './components/CaseForm';
 import { LoginForm } from './components/LoginForm';
 import { RegisterForm } from './components/RegisterForm';
 import { AdminPendingRegistrations } from './components/AdminPendingRegistrations';
+import { PasswordInputWithToggle } from './components/PasswordInputWithToggle';
 import { semanticSearch } from './services/geminiService';
 import { postPatientMapping, getStoredInboundToken, setStoredInboundToken } from './services/patientMappingService';
-import { fetchSession, logout as authLogout, type SessionInfo } from './services/authService';
+import {
+  changePassword,
+  fetchSession,
+  logout as authLogout,
+  type SessionInfo,
+} from './services/authService';
 import {
   createCaseOnServer,
   deleteCaseOnServer,
@@ -356,6 +362,11 @@ export default function App() {
   const [isStatsOpen, setIsStatsOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [inboundTokenDraft, setInboundTokenDraft] = useState('');
+  const [pwdCurrent, setPwdCurrent] = useState('');
+  const [pwdNew, setPwdNew] = useState('');
+  const [pwdConfirm, setPwdConfirm] = useState('');
+  const [pwdMsg, setPwdMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [pwdLoading, setPwdLoading] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [authView, setAuthView] = useState<'login' | 'register'>('login');
@@ -373,6 +384,10 @@ export default function App() {
     return saved ? JSON.parse(saved) : Object.values(Specialty).slice(0, 6);
   });
 
+  const pwdIdCur = useId();
+  const pwdIdNew = useId();
+  const pwdIdConf = useId();
+
   const isInitialMount = useRef(true);
 
   useEffect(() => {
@@ -386,6 +401,10 @@ export default function App() {
   useEffect(() => {
     if (isSettingsOpen) {
       setInboundTokenDraft(getStoredInboundToken() ?? '');
+      setPwdCurrent('');
+      setPwdNew('');
+      setPwdConfirm('');
+      setPwdMsg(null);
     }
   }, [isSettingsOpen]);
 
@@ -734,6 +753,53 @@ export default function App() {
     setCases((prev) => prev.filter((c) => c.id !== id));
     setFavorites((prev) => prev.filter((fid) => fid !== id));
     if (expandedCaseId === id) setExpandedCaseId(null);
+  };
+
+  const handleChangePassword = async () => {
+    setPwdMsg(null);
+    if (pwdNew.length < 8) {
+      setPwdMsg({
+        type: 'err',
+        text: 'Le nouveau mot de passe doit contenir au moins 8 caractères.',
+      });
+      return;
+    }
+    if (pwdNew !== pwdConfirm) {
+      setPwdMsg({
+        type: 'err',
+        text: 'La confirmation ne correspond pas au nouveau mot de passe.',
+      });
+      return;
+    }
+    setPwdLoading(true);
+    try {
+      const out = await changePassword(pwdCurrent, pwdNew);
+      if (out === 'ok') {
+        setPwdCurrent('');
+        setPwdNew('');
+        setPwdConfirm('');
+        setPwdMsg({
+          type: 'ok',
+          text: 'Mot de passe mis à jour. Utilisez-le à la prochaine connexion.',
+        });
+      } else if (out === 'wrong') {
+        setPwdMsg({ type: 'err', text: 'Mot de passe actuel incorrect.' });
+      } else if (out === 'weak') {
+        setPwdMsg({
+          type: 'err',
+          text: 'Le nouveau mot de passe doit contenir au moins 8 caractères.',
+        });
+      } else if (out === 'single_user') {
+        setPwdMsg({
+          type: 'err',
+          text: "Ce mode d'authentification ne permet pas le changement depuis l'app.",
+        });
+      } else {
+        setPwdMsg({ type: 'err', text: 'Impossible de mettre à jour. Réessayez.' });
+      }
+    } finally {
+      setPwdLoading(false);
+    }
   };
 
   const handleAuthLogout = async () => {
@@ -1103,6 +1169,98 @@ export default function App() {
                     ))}
                   </div>
                 </div>
+
+                {session.authRequired &&
+                  session.authenticated &&
+                  'canChangePassword' in session &&
+                  session.canChangePassword && (
+                    <div className="pt-6 border-t border-slate-100 dark:border-slate-800 space-y-4">
+                      <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+                        <KeyRound className="w-5 h-5 text-blue-600 shrink-0" />
+                        <p className="text-xs font-black uppercase tracking-widest text-slate-400">
+                          Mot de passe du compte
+                        </p>
+                      </div>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                        Comptes enregistrés dans l’application (PostgreSQL). Mode « un seul compte » via le fichier
+                        d’environnement : changement côté serveur uniquement.
+                      </p>
+                      <div className="space-y-3">
+                        <div>
+                          <label
+                            htmlFor={pwdIdCur}
+                            className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5"
+                          >
+                            Actuel
+                          </label>
+                          <PasswordInputWithToggle
+                            id={pwdIdCur}
+                            value={pwdCurrent}
+                            onChange={setPwdCurrent}
+                            autoComplete="current-password"
+                            inputClass="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm"
+                            isDark={isDark}
+                            placeholder="Mot de passe actuel"
+                          />
+                        </div>
+                        <div>
+                          <label
+                            htmlFor={pwdIdNew}
+                            className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5"
+                          >
+                            Nouveau
+                          </label>
+                          <PasswordInputWithToggle
+                            id={pwdIdNew}
+                            value={pwdNew}
+                            onChange={setPwdNew}
+                            autoComplete="new-password"
+                            inputClass="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm"
+                            isDark={isDark}
+                            minLength={8}
+                            placeholder="Au moins 8 caractères"
+                          />
+                        </div>
+                        <div>
+                          <label
+                            htmlFor={pwdIdConf}
+                            className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5"
+                          >
+                            Confirmation
+                          </label>
+                          <PasswordInputWithToggle
+                            id={pwdIdConf}
+                            value={pwdConfirm}
+                            onChange={setPwdConfirm}
+                            autoComplete="new-password"
+                            inputClass="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm"
+                            isDark={isDark}
+                            minLength={8}
+                            placeholder="Répéter le nouveau mot de passe"
+                          />
+                        </div>
+                      </div>
+                      {pwdMsg && (
+                        <p
+                          className={`text-sm ${
+                            pwdMsg.type === 'ok'
+                              ? 'text-emerald-600 dark:text-emerald-400'
+                              : 'text-rose-600 dark:text-rose-400'
+                          }`}
+                        >
+                          {pwdMsg.text}
+                        </p>
+                      )}
+                      <button
+                        type="button"
+                        disabled={pwdLoading}
+                        onClick={() => void handleChangePassword()}
+                        className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-bold uppercase tracking-widest"
+                      >
+                        {pwdLoading ? 'Mise à jour…' : 'Enregistrer le nouveau mot de passe'}
+                      </button>
+                    </div>
+                  )}
 
                 <div className="pt-6 border-t border-slate-100 dark:border-slate-800 space-y-4">
                   <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">

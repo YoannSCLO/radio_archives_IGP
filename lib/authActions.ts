@@ -1,13 +1,14 @@
 import {
   authenticateUser,
   buildSessionCookie,
+  getUserFromCookieHeader,
   isAllowPublicRegistration,
   isAuthConfigured,
   signSessionToken,
 } from "./authCore.js";
+import { isMultiUserMode } from "./authEnv.js";
 import { notifyAdminPendingRegistration } from "./notifyAdminPendingRegistration.js";
-import { createUser } from "./usersRepo.js";
-import { isMultiUserMode } from "./db.js";
+import { createUser, updateUserPassword } from "./usersRepo.js";
 
 export type LoginResult =
   | { ok: true; setCookie: string }
@@ -150,6 +151,66 @@ export async function authAdminCreateUserResult(
       };
     }
     return { ok: false, status: 500, body: { error: "Could not create user" } };
+  }
+  return { ok: true };
+}
+
+export type ChangePasswordResult =
+  | { ok: true }
+  | { ok: false; status: number; body: Record<string, unknown> };
+
+export async function authChangePasswordResult(
+  cookieHeader: string | undefined,
+  currentPassword: string,
+  newPassword: string
+): Promise<ChangePasswordResult> {
+  if (!isAuthConfigured()) {
+    return {
+      ok: false,
+      status: 503,
+      body: { error: "Authentication not configured" },
+    };
+  }
+  const user = getUserFromCookieHeader(cookieHeader);
+  if (!user) {
+    return { ok: false, status: 401, body: { error: "Unauthorized" } };
+  }
+  if (!isMultiUserMode()) {
+    return {
+      ok: false,
+      status: 400,
+      body: {
+        error:
+          "Le mot de passe est défini dans la configuration serveur (mode compte unique).",
+        code: "single_user_mode",
+      },
+    };
+  }
+  const em = user.trim().toLowerCase();
+  const r = await updateUserPassword(em, currentPassword, newPassword);
+  if (r === "weak_password") {
+    return {
+      ok: false,
+      status: 400,
+      body: { error: "Le nouveau mot de passe doit faire au moins 8 caractères." },
+    };
+  }
+  if (r === "not_found") {
+    return {
+      ok: false,
+      status: 400,
+      body: {
+        error: "Compte introuvable en base applicative.",
+        code: "no_managed_account",
+      },
+    };
+  }
+  if (r === "wrong_password") {
+    return {
+      ok: false,
+      status: 403,
+      body: { error: "Mot de passe actuel incorrect." },
+    };
   }
   return { ok: true };
 }

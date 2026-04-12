@@ -172,3 +172,29 @@ export async function approveUserByEmail(email: string): Promise<boolean> {
   `;
   return (rows as { email: string }[]).length > 0;
 }
+
+export async function updateUserPassword(
+  email: string,
+  currentPlain: string,
+  newPlain: string
+): Promise<"ok" | "weak_password" | "not_found" | "wrong_password"> {
+  if (newPlain.length < 8) return "weak_password";
+  await ensureUsersTable();
+  const sql = getSql();
+  const em = email.trim().toLowerCase();
+  const user = await findUserByEmail(em);
+  if (!user) return "not_found";
+  const match = await bcrypt.compare(currentPlain, user.password_hash);
+  if (!match) return "wrong_password";
+  const hash = bcrypt.hashSync(newPlain, 12);
+  if (!sql) {
+    const users = await readLocalUsers();
+    const next = users.map((u) =>
+      u.email.toLowerCase() === em ? { ...u, password_hash: hash } : u
+    );
+    await writeLocalUsers(next);
+    return "ok";
+  }
+  await sql`UPDATE app_users SET password_hash = ${hash} WHERE email = ${em}`;
+  return "ok";
+}
