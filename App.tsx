@@ -46,7 +46,8 @@ import {
   Layers,
   KeyRound,
   LogOut,
-  Pencil
+  Pencil,
+  ShieldCheck
 } from 'lucide-react';
 
 const IGPLogo = ({ className = "h-12" }: { className?: string }) => (
@@ -786,7 +787,21 @@ export default function App() {
             <RadioArchiveLogo />
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3 sm:gap-4">
+            {session.authRequired &&
+              session.authenticated &&
+              'isAdmin' in session &&
+              session.isAdmin && (
+                <span
+                  role="status"
+                  aria-label="Profil administrateur"
+                  className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 sm:px-3 sm:py-1.5 text-[10px] sm:text-[11px] font-bold uppercase tracking-wider bg-amber-100 text-amber-950 dark:bg-amber-950/50 dark:text-amber-100 border border-amber-200/90 dark:border-amber-700/60 shadow-sm"
+                  title="Vous avez le profil administrateur (validation des inscriptions)"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 shrink-0 opacity-90" aria-hidden />
+                  <span className="hidden min-[400px]:inline">Admin</span>
+                </span>
+              )}
             {session.authRequired && session.authenticated && (
               <button
                 type="button"
