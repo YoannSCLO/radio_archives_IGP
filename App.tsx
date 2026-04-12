@@ -882,11 +882,20 @@ export default function App() {
               {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
             </button>
             <button
+              type="button"
+              onClick={() => setIsSettingsOpen(true)}
+              className="p-4 rounded-full bg-white dark:bg-slate-800 text-slate-400 border border-slate-200 dark:border-slate-700 hover:text-blue-600 transition-all shadow-sm shrink-0"
+              title="Réglages"
+              aria-label="Ouvrir les réglages"
+            >
+              <Settings2 className="w-5 h-5" />
+            </button>
+            <button
               onClick={() => {
                 setCaseToEdit(null);
                 setIsFormOpen(true);
               }}
-              className="flex items-center gap-3 bg-blue-600 hover:bg-blue-700 text-white px-8 py-3.5 rounded-full font-bold text-base shadow-xl shadow-blue-500/30 active:scale-95 transition-all"
+              className="flex items-center gap-2 sm:gap-3 bg-blue-600 hover:bg-blue-700 text-white px-4 sm:px-8 py-3.5 rounded-full font-bold text-sm sm:text-base shadow-xl shadow-blue-500/30 active:scale-95 transition-all shrink-0"
             >
               <Plus className="w-5 h-5" />
               <span>Nouveau Dossier</span>
@@ -1000,7 +1009,6 @@ export default function App() {
                 </button>
               );
             })}
-            <button onClick={() => setIsSettingsOpen(true)} className="p-4 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-blue-600 transition-all ml-4 shadow-sm"><Settings2 className="w-5 h-5" /></button>
           </div>
           <div className="relative group w-full lg:w-96">
             <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
