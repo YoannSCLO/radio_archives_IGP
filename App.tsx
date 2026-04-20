@@ -51,6 +51,11 @@ import {
   Pencil,
   ShieldCheck,
   GraduationCap,
+  Sliders,
+  Link,
+  UserCog,
+  ToggleLeft,
+  ToggleRight,
 } from 'lucide-react';
 
 const IGPLogo = ({ className = "h-12" }: { className?: string }) => (
@@ -99,7 +104,7 @@ function getNextCaseCode(cases: RadioCase[]): string {
   return `CASE-${String(max + 1).padStart(5, '0')}`;
 }
 
-/** Modification réservée à l’auteur lorsque la connexion est obligatoire. Sans auth obligatoire, tout utilisateur peut modifier (justification). */
+/** Modification réservée à l'auteur lorsque la connexion est obligatoire. Sans auth obligatoire, tout utilisateur peut modifier (justification). */
 function canEditCase(session: SessionInfo, c: RadioCase): boolean {
   if (!session.authRequired) return true;
   if (!session.authenticated) return false;
@@ -171,6 +176,7 @@ export default function App() {
   const [authView, setAuthView] = useState<'login' | 'register'>('login');
   const [expandedCaseId, setExpandedCaseId] = useState<string | null>(null);
   const [isTrainingOpen, setIsTrainingOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<'specialties' | 'account' | 'token'>('specialties');
   const [isDark, setIsDark] = useState(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('theme');
@@ -205,6 +211,7 @@ export default function App() {
       setPwdNew('');
       setPwdConfirm('');
       setPwdMsg(null);
+      setSettingsTab('specialties');
     }
   }, [isSettingsOpen]);
 
@@ -350,7 +357,7 @@ export default function App() {
       const created = await createCaseOnServer(data);
       if (!created) {
         window.alert(
-          "Enregistrement sur le serveur impossible (vérifiez DATABASE_URL, la connexion et que vous êtes connecté si l’auth est activée)."
+          "Enregistrement sur le serveur impossible (vérifiez DATABASE_URL, la connexion et que vous êtes connecté si l'auth est activée)."
         );
         return;
       }
@@ -607,6 +614,14 @@ export default function App() {
     const s = await fetchSession();
     setSession(s);
   };
+
+  // Computed before render for use in settings drawer
+  const canChangePwd =
+    session !== null &&
+    session.authRequired &&
+    session.authenticated &&
+    'canChangePassword' in session &&
+    !!(session as { canChangePassword?: boolean }).canChangePassword;
 
   if (authLoading || session === null) {
     return (
@@ -1012,48 +1027,153 @@ export default function App() {
         </div>
       </main>
 
+      {/* ── Settings Drawer ───────────────────────────────────── */}
       {isSettingsOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-8 bg-slate-950/60 backdrop-blur-xl animate-in fade-in duration-200">
-          <div className="bg-white dark:bg-slate-900 rounded-[3rem] shadow-2xl w-full max-w-xl overflow-hidden border border-slate-200 dark:border-slate-800">
-            <div className="flex items-center justify-between p-10 border-b dark:border-slate-800">
-              <h2 className="text-2xl font-light tracking-tighter">Configuration</h2>
-              <button onClick={() => setIsSettingsOpen(false)} className="p-3 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-all"><X className="w-6 h-6" /></button>
+        <div className="fixed inset-0 z-50 flex" aria-modal="true">
+          {/* Backdrop */}
+          <div
+            className="flex-1 bg-slate-950/40 backdrop-blur-sm animate-in fade-in duration-200"
+            onClick={() => setIsSettingsOpen(false)}
+          />
+
+          {/* Drawer */}
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 h-full flex flex-col shadow-2xl border-l border-slate-200 dark:border-slate-800 animate-in slide-in-from-right duration-300">
+
+            {/* Drawer header */}
+            <div className="flex items-center justify-between px-8 pt-8 pb-6 border-b border-slate-100 dark:border-slate-800 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
+                  <Settings2 className="w-4 h-4 text-slate-500" />
+                </div>
+                <h2 className="text-lg font-bold tracking-tight text-slate-900 dark:text-white">Réglages</h2>
+              </div>
+              <button
+                onClick={() => setIsSettingsOpen(false)}
+                className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-white transition-all"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
-            <div className="p-10 space-y-8 max-h-[60vh] overflow-y-auto no-scrollbar">
-                <div>
-                  <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-6">Filtres spécialités</p>
-                  <div className="space-y-4">
-                    {Object.values(Specialty).map(s => (
-                      <button key={s} onClick={() => toggleSpecialtyVisibility(s)} className={`flex items-center justify-between w-full p-5 rounded-2xl border transition-all ${visibleSpecialties.includes(s) ? 'bg-blue-50/50 dark:bg-blue-900/10 border-blue-200 dark:border-blue-800 shadow-sm' : 'bg-transparent border-slate-100 dark:border-slate-800 opacity-60'}`}>
-                        <span className="text-sm font-bold text-slate-700 dark:text-slate-300">{s}</span>
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 transition-all ${visibleSpecialties.includes(s) ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-200 dark:border-slate-700'}`}>{visibleSpecialties.includes(s) && <Check className="w-5 h-5" strokeWidth={3} />}</div>
+
+            {/* Tab nav */}
+            <div className="flex gap-1 px-6 py-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+              <button
+                onClick={() => setSettingsTab('specialties')}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex-1 justify-center ${settingsTab === 'specialties' ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+              >
+                <Sliders className="w-4 h-4" />
+                <span className="hidden sm:inline">Spécialités</span>
+              </button>
+              {canChangePwd && (
+                <button
+                  onClick={() => setSettingsTab('account')}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex-1 justify-center ${settingsTab === 'account' ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                >
+                  <UserCog className="w-4 h-4" />
+                  <span className="hidden sm:inline">Compte</span>
+                </button>
+              )}
+              <button
+                onClick={() => setSettingsTab('token')}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex-1 justify-center ${settingsTab === 'token' ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+              >
+                <Link className="w-4 h-4" />
+                <span className="hidden sm:inline">Correspondance</span>
+              </button>
+            </div>
+
+            {/* Scrollable content */}
+            <div className="flex-1 overflow-y-auto px-6 py-6 no-scrollbar">
+
+              {/* ── Tab: Spécialités ───────────────── */}
+              {settingsTab === 'specialties' && (
+                <div className="space-y-5">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-[0.3em] text-slate-400 mb-1">Onglets visibles</p>
+                    <p className="text-xs text-slate-500 leading-relaxed mb-5">
+                      Choisissez les spécialités affichées dans la barre de navigation.
+                    </p>
+
+                    {/* Select all / none */}
+                    <div className="flex gap-2 mb-5">
+                      <button
+                        onClick={() => setVisibleSpecialties(Object.values(Specialty))}
+                        className="flex-1 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center justify-center gap-1.5"
+                      >
+                        <ToggleRight className="w-4 h-4 text-blue-500" />
+                        Tout afficher
                       </button>
-                    ))}
+                      <button
+                        onClick={() => setVisibleSpecialties([])}
+                        className="flex-1 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center justify-center gap-1.5"
+                      >
+                        <ToggleLeft className="w-4 h-4 text-slate-400" />
+                        Tout masquer
+                      </button>
+                    </div>
+
+                    {/* Grid of specialty toggles */}
+                    <div className="grid grid-cols-2 gap-2">
+                      {Object.values(Specialty).map(s => {
+                        const cfg = SPECIALTY_MAP[s];
+                        const isOn = visibleSpecialties.includes(s);
+                        const caseCount = cases.filter(c => c.specialty === s).length;
+                        return (
+                          <button
+                            key={s}
+                            onClick={() => toggleSpecialtyVisibility(s)}
+                            className={`relative flex flex-col gap-1.5 p-4 rounded-2xl border-2 text-left transition-all group ${
+                              isOn
+                                ? `${cfg.bg} border-transparent shadow-sm`
+                                : 'bg-slate-50 dark:bg-slate-800/50 border-transparent opacity-50 hover:opacity-75'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className={`text-xs font-black leading-tight ${isOn ? cfg.color : 'text-slate-500'}`}>
+                                {s}
+                              </span>
+                              <div className={`w-5 h-5 rounded-full flex items-center justify-center border-2 shrink-0 transition-all ${
+                                isOn
+                                  ? 'bg-current border-current'
+                                  : 'border-slate-300 dark:border-slate-600'
+                              }`} style={isOn ? { color: 'transparent', background: 'currentColor' } : {}}>
+                                {isOn && <Check className={`w-3 h-3 ${cfg.color}`} strokeWidth={3} />}
+                              </div>
+                            </div>
+                            {caseCount > 0 && (
+                              <span className={`text-[10px] font-bold tabular-nums ${isOn ? cfg.color : 'text-slate-400'} opacity-70`}>
+                                {caseCount} cas
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Summary */}
+                    <div className="mt-5 px-4 py-3 bg-slate-50 dark:bg-slate-800/50 rounded-2xl flex items-center justify-between">
+                      <span className="text-xs text-slate-500">Spécialités affichées</span>
+                      <span className="text-sm font-black text-slate-900 dark:text-white">
+                        {visibleSpecialties.length} / {Object.values(Specialty).length}
+                      </span>
+                    </div>
                   </div>
                 </div>
+              )}
 
-                {session.authRequired &&
-                  session.authenticated &&
-                  'canChangePassword' in session &&
-                  session.canChangePassword && (
-                    <div className="pt-6 border-t border-slate-100 dark:border-slate-800 space-y-4">
-                      <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
-                        <KeyRound className="w-5 h-5 text-blue-600 shrink-0" />
-                        <p className="text-xs font-black uppercase tracking-widest text-slate-400">
-                          Mot de passe du compte
-                        </p>
-                      </div>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                        Comptes enregistrés dans l’application (PostgreSQL). Mode « un seul compte » via le fichier
-                        d’environnement : changement côté serveur uniquement.
+              {/* ── Tab: Compte ───────────────────── */}
+              {settingsTab === 'account' && canChangePwd && (
+                  <div className="space-y-5">
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-[0.3em] text-slate-400 mb-1">Mot de passe</p>
+                      <p className="text-xs text-slate-500 leading-relaxed mb-5">
+                        Comptes enregistrés via PostgreSQL. En mode fichier d'environnement, le changement s'effectue côté serveur.
                       </p>
+
                       <div className="space-y-3">
                         <div>
-                          <label
-                            htmlFor={pwdIdCur}
-                            className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5"
-                          >
-                            Actuel
+                          <label htmlFor={pwdIdCur} className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                            Mot de passe actuel
                           </label>
                           <PasswordInputWithToggle
                             id={pwdIdCur}
@@ -1062,15 +1182,12 @@ export default function App() {
                             autoComplete="current-password"
                             inputClass="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm"
                             isDark={isDark}
-                            placeholder="Mot de passe actuel"
+                            placeholder="••••••••"
                           />
                         </div>
                         <div>
-                          <label
-                            htmlFor={pwdIdNew}
-                            className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5"
-                          >
-                            Nouveau
+                          <label htmlFor={pwdIdNew} className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                            Nouveau mot de passe
                           </label>
                           <PasswordInputWithToggle
                             id={pwdIdNew}
@@ -1080,14 +1197,11 @@ export default function App() {
                             inputClass="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm"
                             isDark={isDark}
                             minLength={8}
-                            placeholder="Au moins 8 caractères"
+                            placeholder="8 caractères minimum"
                           />
                         </div>
                         <div>
-                          <label
-                            htmlFor={pwdIdConf}
-                            className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5"
-                          >
+                          <label htmlFor={pwdIdConf} className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
                             Confirmation
                           </label>
                           <PasswordInputWithToggle
@@ -1102,64 +1216,80 @@ export default function App() {
                           />
                         </div>
                       </div>
+
                       {pwdMsg && (
-                        <p
-                          className={`text-sm ${
-                            pwdMsg.type === 'ok'
-                              ? 'text-emerald-600 dark:text-emerald-400'
-                              : 'text-rose-600 dark:text-rose-400'
-                          }`}
-                        >
+                        <div className={`mt-4 flex items-start gap-3 p-4 rounded-xl text-sm ${
+                          pwdMsg.type === 'ok'
+                            ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300'
+                            : 'bg-rose-50 dark:bg-rose-900/20 text-rose-700 dark:text-rose-300'
+                        }`}>
+                          {pwdMsg.type === 'ok'
+                            ? <Check className="w-4 h-4 shrink-0 mt-0.5" />
+                            : <X className="w-4 h-4 shrink-0 mt-0.5" />}
                           {pwdMsg.text}
-                        </p>
+                        </div>
                       )}
+
                       <button
                         type="button"
                         disabled={pwdLoading}
                         onClick={() => void handleChangePassword()}
-                        className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-bold uppercase tracking-widest"
+                        className="w-full mt-5 py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-bold uppercase tracking-widest transition-all active:scale-95"
                       >
                         {pwdLoading ? 'Mise à jour…' : 'Enregistrer le nouveau mot de passe'}
                       </button>
                     </div>
-                  )}
-
-                <div className="pt-6 border-t border-slate-100 dark:border-slate-800 space-y-4">
-                  <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
-                    <KeyRound className="w-5 h-5 text-emerald-600 shrink-0" />
-                    <p className="text-xs font-black uppercase tracking-widest text-slate-400">Correspondance patient</p>
                   </div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                    Si la DSI vous a donné un jeton d&apos;accès, collez-le ici pour cette session (uniquement sur ce navigateur).
-                  </p>
-                  <input
-                    type="password"
-                    autoComplete="off"
-                    value={inboundTokenDraft}
-                    onChange={(e) => setInboundTokenDraft(e.target.value)}
-                    placeholder="Jeton d'accès au proxy"
-                    className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm"
-                  />
-                  <div className="flex gap-3">
-                    <button
-                      type="button"
-                      onClick={() => { setStoredInboundToken(inboundTokenDraft); }}
-                      className="flex-1 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold uppercase tracking-widest"
-                    >
-                      Enregistrer le jeton (session)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setStoredInboundToken(null); setInboundTokenDraft(''); }}
-                      className="px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-500"
-                    >
-                      Effacer
-                    </button>
+                )}
+
+              {/* ── Tab: Correspondance ───────────── */}
+              {settingsTab === 'token' && (
+                <div className="space-y-5">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-[0.3em] text-slate-400 mb-1">Jeton d'accès patient</p>
+                    <p className="text-xs text-slate-500 leading-relaxed mb-5">
+                      Si la DSI vous a remis un jeton d'accès au proxy de correspondance, collez-le ici. Il est conservé uniquement dans ce navigateur pour la session en cours.
+                    </p>
+
+                    <div className="relative mb-3">
+                      <Link className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input
+                        type="password"
+                        autoComplete="off"
+                        value={inboundTokenDraft}
+                        onChange={e => setInboundTokenDraft(e.target.value)}
+                        placeholder="Coller le jeton ici…"
+                        className="w-full pl-11 pr-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm outline-none focus:border-emerald-400 dark:focus:border-emerald-500 transition-colors"
+                      />
+                    </div>
+
+                    {/* Token status indicator */}
+                    {getStoredInboundToken() && (
+                      <div className="flex items-center gap-2 mb-4 px-3 py-2 bg-emerald-50 dark:bg-emerald-900/20 rounded-xl">
+                        <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                        <span className="text-xs font-bold text-emerald-700 dark:text-emerald-300">Jeton actif dans cette session</span>
+                      </div>
+                    )}
+
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setStoredInboundToken(inboundTokenDraft)}
+                        className="flex-1 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold uppercase tracking-widest transition-all active:scale-95"
+                      >
+                        Enregistrer
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setStoredInboundToken(null); setInboundTokenDraft(''); }}
+                        className="px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-500 hover:text-rose-600 hover:border-rose-200 dark:hover:border-rose-800 transition-all"
+                      >
+                        Effacer
+                      </button>
+                    </div>
                   </div>
                 </div>
-            </div>
-            <div className="p-10 border-t dark:border-slate-800">
-              <button onClick={() => setIsSettingsOpen(false)} className="w-full py-5 bg-slate-950 dark:bg-white text-white dark:text-slate-950 rounded-2xl font-black uppercase tracking-[0.25em] text-xs shadow-2xl active:scale-95 transition-transform">Valider la Configuration</button>
+              )}
             </div>
           </div>
         </div>
