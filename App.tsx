@@ -1,0 +1,1192 @@
+
+import React, { useState, useEffect, useMemo, useRef, useId } from 'react';
+import { Specialty, Difficulty, RadioCase } from './types';
+import { SPECIALTY_MAP, DIFFICULTY_MAP } from './constants';
+import { Badge } from './components/Badge';
+import { CaseForm } from './components/CaseForm';
+import { LoginForm } from './components/LoginForm';
+import { RegisterForm } from './components/RegisterForm';
+import { AdminPendingRegistrations } from './components/AdminPendingRegistrations';
+import { PasswordInputWithToggle } from './components/PasswordInputWithToggle';
+import { MedicalStackViewer } from './components/MedicalStackViewer';
+import { TrainingModule } from './components/TrainingModule';
+import { semanticSearch } from './services/geminiService';
+import { postPatientMapping, getStoredInboundToken, setStoredInboundToken } from './services/patientMappingService';
+import {
+  changePassword,
+  fetchSession,
+  logout as authLogout,
+  type SessionInfo,
+} from './services/authService';
+import {
+  createCaseOnServer,
+  deleteCaseOnServer,
+  fetchCasesFromServer,
+  updateCaseOnServer,
+} from './services/casesApi';
+import {
+  Plus,
+  Search,
+  Database,
+  ChevronRight,
+  Trash2,
+  Sun,
+  Moon,
+  Sparkles,
+  Loader2,
+  Monitor,
+  LayoutDashboard,
+  BarChart3,
+  ChevronDown,
+  ChevronUp,
+  Settings2,
+  X,
+  Check,
+  Star,
+  Hash,
+  ListFilter,
+  Activity,
+  KeyRound,
+  LogOut,
+  Pencil,
+  ShieldCheck,
+  GraduationCap,
+} from 'lucide-react';
+
+const IGPLogo = ({ className = "h-12" }: { className?: string }) => (
+  <svg viewBox="0 0 450 180" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
+    <circle cx="110" cy="90" r="70" stroke="#164E63" strokeWidth="6" strokeDasharray="300 100" />
+    <circle cx="110" cy="90" r="55" stroke="#0891B2" strokeWidth="6" strokeDasharray="200 80" />
+    <circle cx="110" cy="90" r="40" stroke="#164E63" strokeWidth="6" strokeDasharray="150 50" />
+    <circle cx="110" cy="90" r="25" stroke="#0891B2" strokeWidth="6" strokeDasharray="100 40" />
+    <circle cx="110" cy="90" r="10" fill="#164E63" className="dark:fill-cyan-500" />
+    <text x="210" y="95" fontFamily="Inter, sans-serif" fontSize="100" fontWeight="900" letterSpacing="-4" fill="#1E40AF" className="dark:fill-white">IGP</text>
+    <text x="212" y="130" fontFamily="Inter, sans-serif" fontSize="32" fontWeight="400" letterSpacing="6" fill="#64748b" className="dark:fill-slate-400 uppercase">Imagerie</text>
+  </svg>
+);
+
+const RadioArchiveLogo = () => (
+  <div className="flex items-center gap-4 group cursor-default">
+    <div className="w-12 h-12 bg-slate-900 dark:bg-white rounded-2xl flex items-center justify-center transition-all group-hover:scale-105 duration-300">
+      <LayoutDashboard className="w-6 h-6 text-white dark:text-slate-900" />
+    </div>
+    <div className="flex flex-col -space-y-1">
+      <span className="text-2xl font-black tracking-tighter text-slate-900 dark:text-white">RADIO</span>
+      <span className="text-xs font-medium tracking-[0.25em] text-blue-600 uppercase">Archive</span>
+    </div>
+  </div>
+);
+
+
+// MedicalStackViewer is now in components/MedicalStackViewer.tsx
+
+const CASE_CODE_RE = /^CASE-(\d+)$/;
+
+function extractCaseCode(c: Record<string, unknown>): string | null {
+  const cc = c.caseCode;
+  if (typeof cc === 'string' && CASE_CODE_RE.test(cc)) return cc;
+  const pid = c.patientId;
+  if (typeof pid === 'string' && CASE_CODE_RE.test(pid)) return pid;
+  return null;
+}
+
+function getNextCaseCode(cases: RadioCase[]): string {
+  let max = 0;
+  for (const c of cases) {
+    const m = CASE_CODE_RE.exec(c.caseCode);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `CASE-${String(max + 1).padStart(5, '0')}`;
+}
+
+/** Modification réservée à l’auteur lorsque la connexion est obligatoire. Sans auth obligatoire, tout utilisateur peut modifier (justification). */
+function canEditCase(session: SessionInfo, c: RadioCase): boolean {
+  if (!session.authRequired) return true;
+  if (!session.authenticated) return false;
+  const u = 'username' in session ? session.username?.trim().toLowerCase() : undefined;
+  if (!u || !c.authorEmail) return false;
+  return c.authorEmail === u;
+}
+
+function migrateLoadedCases(raw: unknown): RadioCase[] {
+  if (!Array.isArray(raw)) return [];
+  const list = raw.filter((x): x is Record<string, unknown> => x !== null && typeof x === 'object');
+
+  let maxNum = 0;
+  const rows = list.map((c) => {
+    const code = extractCaseCode(c);
+    if (code) {
+      const m = CASE_CODE_RE.exec(code)!;
+      maxNum = Math.max(maxNum, parseInt(m[1], 10));
+    }
+    return {
+      id: String(c.id),
+      code,
+      dateAdded: String(c.dateAdded ?? ''),
+      c,
+    };
+  });
+
+  const needAssign = rows.filter((x) => !x.code);
+  const sortedNeed = [...needAssign].sort((a, b) => new Date(a.dateAdded).getTime() - new Date(b.dateAdded).getTime());
+  const codeById = new Map<string, string>();
+  let next = maxNum + 1;
+  for (const item of sortedNeed) {
+    codeById.set(item.id, `CASE-${String(next++).padStart(5, '0')}`);
+  }
+
+  return rows.map(({ c, id, code }) => {
+    const caseCode = code ?? codeById.get(id)!;
+    const rest: Record<string, unknown> = { ...c };
+    delete rest.lastName;
+    delete rest.firstName;
+    delete rest.patientId;
+    delete rest.caseCode;
+    return { ...rest, caseCode } as RadioCase;
+  });
+}
+
+export default function App() {
+  const [cases, setCases] = useState<RadioCase[]>([]);
+  const [favorites, setFavorites] = useState<string[]>(() => {
+    const saved = localStorage.getItem('radio_favorites');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [activeTab, setActiveTab] = useState<Specialty | 'Tous' | 'Favoris'>('Tous');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [caseToEdit, setCaseToEdit] = useState<RadioCase | null>(null);
+  /** `server` = base PostgreSQL partagée ; `local` = navigateur uniquement. */
+  const [casesStorage, setCasesStorage] = useState<'server' | 'local'>('local');
+  const [isStatsOpen, setIsStatsOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [inboundTokenDraft, setInboundTokenDraft] = useState('');
+  const [pwdCurrent, setPwdCurrent] = useState('');
+  const [pwdNew, setPwdNew] = useState('');
+  const [pwdConfirm, setPwdConfirm] = useState('');
+  const [pwdMsg, setPwdMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [pwdLoading, setPwdLoading] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [session, setSession] = useState<SessionInfo | null>(null);
+  const [authView, setAuthView] = useState<'login' | 'register'>('login');
+  const [expandedCaseId, setExpandedCaseId] = useState<string | null>(null);
+  const [isTrainingOpen, setIsTrainingOpen] = useState(false);
+  const [isDark, setIsDark] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('theme');
+      return saved === 'dark' || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    }
+    return false;
+  });
+
+  const [visibleSpecialties, setVisibleSpecialties] = useState<Specialty[]>(() => {
+    const saved = localStorage.getItem('visible_specialties');
+    return saved ? JSON.parse(saved) : Object.values(Specialty).slice(0, 6);
+  });
+
+  const pwdIdCur = useId();
+  const pwdIdNew = useId();
+  const pwdIdConf = useId();
+
+  const isInitialMount = useRef(true);
+
+  useEffect(() => {
+    localStorage.setItem('visible_specialties', JSON.stringify(visibleSpecialties));
+  }, [visibleSpecialties]);
+
+  useEffect(() => {
+    localStorage.setItem('radio_favorites', JSON.stringify(favorites));
+  }, [favorites]);
+
+  useEffect(() => {
+    if (isSettingsOpen) {
+      setInboundTokenDraft(getStoredInboundToken() ?? '');
+      setPwdCurrent('');
+      setPwdNew('');
+      setPwdConfirm('');
+      setPwdMsg(null);
+    }
+  }, [isSettingsOpen]);
+
+  useEffect(() => {
+    void fetchSession().then((s) => {
+      setSession(s);
+      setAuthLoading(false);
+    });
+  }, []);
+
+  const tabs = useMemo(() => ['Tous', 'Favoris', ...visibleSpecialties], [visibleSpecialties]);
+  const [isSmartLoading, setIsSmartLoading] = useState(false);
+  const [smartResults, setSmartResults] = useState<{ matches: {id: string, reason: string}[], suggestedKeywords: string[] } | null>(null);
+
+  useEffect(() => {
+    if (isDark) { document.documentElement.classList.add('dark'); localStorage.setItem('theme', 'dark'); }
+    else { document.documentElement.classList.remove('dark'); localStorage.setItem('theme', 'light'); }
+  }, [isDark]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const remote = await fetchCasesFromServer();
+      if (cancelled) return;
+      if (remote !== null) {
+        setCases(remote);
+        setCasesStorage('server');
+        isInitialMount.current = false;
+        return;
+      }
+      const saved = localStorage.getItem('radio_cases');
+      setCases(migrateLoadedCases(saved ? JSON.parse(saved) : []));
+      setCasesStorage('local');
+      isInitialMount.current = false;
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /** Après connexion, basculer sur la base partagée si disponible. */
+  useEffect(() => {
+    if (!session || !session.authRequired || !session.authenticated) return;
+    let cancelled = false;
+    void (async () => {
+      const remote = await fetchCasesFromServer();
+      if (cancelled || remote === null) return;
+      setCases(remote);
+      setCasesStorage('server');
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
+
+  useEffect(() => {
+    if (!isInitialMount.current && casesStorage === 'local') {
+      localStorage.setItem('radio_cases', JSON.stringify(cases));
+    }
+  }, [cases, casesStorage]);
+
+  const searchMatchedCases = useMemo(() => {
+    return cases.filter(c => {
+      const basicSearch = 
+        c.caseCode.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        c.diagnosis.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        c.clinicalNote.toLowerCase().includes(searchQuery.toLowerCase());
+
+      const isSmartMatch = smartResults?.matches.some(m => m.id === c.id);
+      
+      return basicSearch || isSmartMatch;
+    });
+  }, [cases, searchQuery, smartResults]);
+
+  const filteredCases = useMemo(() => {
+    return searchMatchedCases.filter(c => {
+      if (activeTab === 'Tous') return true;
+      if (activeTab === 'Favoris') return favorites.includes(c.id);
+      return c.specialty === activeTab;
+    }).sort((a, b) => new Date(b.dateAdded).getTime() - new Date(a.dateAdded).getTime());
+  }, [searchMatchedCases, activeTab, favorites]);
+
+  const tabDetailedCounts = useMemo(() => {
+    const results: Record<string, { visible: number; total: number }> = {};
+    tabs.forEach(tab => {
+      let totalInCategory = 0;
+      let visibleInCategory = 0;
+      if (tab === 'Tous') {
+        totalInCategory = cases.length;
+        visibleInCategory = searchMatchedCases.length;
+      } else if (tab === 'Favoris') {
+        totalInCategory = favorites.length;
+        visibleInCategory = searchMatchedCases.filter(c => favorites.includes(c.id)).length;
+      } else {
+        totalInCategory = cases.filter(c => c.specialty === tab).length;
+        visibleInCategory = searchMatchedCases.filter(c => c.specialty === tab).length;
+      }
+      results[tab] = { visible: visibleInCategory, total: totalInCategory };
+    });
+    return results;
+  }, [cases, searchMatchedCases, favorites, tabs]);
+
+  const stats = useMemo(() => {
+    const specialtyDist: Record<string, number> = {};
+    const difficultyDist: Record<string, number> = {};
+    const modalityDist: Record<string, number> = {};
+    
+    cases.forEach(c => {
+      specialtyDist[c.specialty] = (specialtyDist[c.specialty] || 0) + 1;
+      difficultyDist[c.difficulty] = (difficultyDist[c.difficulty] || 0) + 1;
+      modalityDist[c.modality] = (modalityDist[c.modality] || 0) + 1;
+    });
+    
+    return {
+      specialty: Object.entries(specialtyDist).sort((a, b) => b[1] - a[1]),
+      /** Toujours les 4 niveaux, ordre fixe (du plus accessible au plus expert). */
+      difficultyByLevel: Object.values(Difficulty).map((d) => [d, difficultyDist[d] ?? 0] as [string, number]),
+      modality: Object.entries(modalityDist).sort((a, b) => b[1] - a[1]),
+    };
+  }, [cases]);
+
+  const toggleSpecialtyVisibility = (s: Specialty) => {
+    setVisibleSpecialties(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
+  };
+
+  const toggleFavorite = (id: string) => {
+    setFavorites(prev => prev.includes(id) ? prev.filter(fid => fid !== id) : [...prev, id]);
+  };
+
+  const handleSmartSearch = async () => {
+    if (!searchQuery) return;
+    setIsSmartLoading(true);
+    const results = await semanticSearch(searchQuery, cases);
+    setSmartResults(results);
+    setIsSmartLoading(false);
+  };
+
+  const handleAddCase = async (
+    data: Omit<RadioCase, 'id' | 'dateAdded' | 'caseCode' | 'authorEmail' | 'lastModifiedAt' | 'lastEditJustification'>,
+    patientMapping?: { ipp: string; lastName?: string; firstName?: string } | null
+  ) => {
+    if (casesStorage === 'server') {
+      const created = await createCaseOnServer(data);
+      if (!created) {
+        window.alert(
+          "Enregistrement sur le serveur impossible (vérifiez DATABASE_URL, la connexion et que vous êtes connecté si l’auth est activée)."
+        );
+        return;
+      }
+      setCases((prev) => [created, ...prev]);
+      if (patientMapping?.ipp) {
+        const result = await postPatientMapping({
+          caseCode: created.caseCode,
+          caseId: created.id,
+          ipp: patientMapping.ipp,
+          lastName: patientMapping.lastName,
+          firstName: patientMapping.firstName,
+        });
+        if (result.ok === false) {
+          const { reason } = result;
+          if (reason === "not_configured") {
+            window.alert(
+              "Un IPP a été saisi mais le proxy serveur n'est pas configuré (variable PATIENT_MAPPING_UPSTREAM_URL côté hébergement). Le cas est enregistré sur le serveur mais la correspondance patient n'a pas été transmise."
+            );
+          } else if (reason === "unauthorized") {
+            window.alert(
+              "Accès refusé (401). Indiquez le jeton dans Réglages → correspondance patient, puis réessayez."
+            );
+          } else {
+            window.alert(
+              "La correspondance patient n'a pas été transmise. Vérifiez le réseau et l'endpoint upstream."
+            );
+          }
+        }
+      }
+      setIsFormOpen(false);
+      return;
+    }
+
+    let nextCode = '';
+    let newId = '';
+    const authorEmail =
+      session &&
+      session.authRequired &&
+      session.authenticated &&
+      'username' in session &&
+      session.username
+        ? session.username.trim().toLowerCase()
+        : undefined;
+    setCases((prev) => {
+      nextCode = getNextCaseCode(prev);
+      newId = Math.random().toString(36).substr(2, 9);
+      const newCase: RadioCase = {
+        ...data,
+        caseCode: nextCode,
+        id: newId,
+        dateAdded: new Date().toISOString(),
+        ...(authorEmail ? { authorEmail } : {}),
+      };
+      return [newCase, ...prev];
+    });
+
+    if (patientMapping?.ipp) {
+      const result = await postPatientMapping({
+        caseCode: nextCode,
+        caseId: newId,
+        ipp: patientMapping.ipp,
+        lastName: patientMapping.lastName,
+        firstName: patientMapping.firstName,
+      });
+      if (result.ok === false) {
+        const { reason } = result;
+        if (reason === "not_configured") {
+          window.alert(
+            "Un IPP a été saisi mais le proxy serveur n'est pas configuré (variable PATIENT_MAPPING_UPSTREAM_URL côté hébergement). Le cas est enregistré en local uniquement."
+          );
+        } else if (reason === "unauthorized") {
+          window.alert(
+            "Accès refusé (401). Indiquez le jeton dans Réglages → correspondance patient, puis réessayez."
+          );
+        } else {
+          window.alert(
+            "Le cas a été enregistré localement, mais la transmission vers votre base sécurisée a échoué. Vérifiez le réseau et l'endpoint upstream."
+          );
+        }
+      }
+    }
+
+    setIsFormOpen(false);
+  };
+
+  const handleUpdateCase = async (
+    caseId: string,
+    data: Omit<RadioCase, 'id' | 'dateAdded' | 'caseCode' | 'authorEmail' | 'lastModifiedAt' | 'lastEditJustification'>,
+    justification: string,
+    patientMapping?: { ipp: string; lastName?: string; firstName?: string } | null
+  ) => {
+    if (casesStorage === 'server') {
+      const updated = await updateCaseOnServer(
+        caseId,
+        {
+          specialty: data.specialty,
+          difficulty: data.difficulty,
+          modality: data.modality,
+          clinicalNote: data.clinicalNote,
+          diagnosis: data.diagnosis,
+          series: data.series,
+        },
+        justification
+      );
+      if (!updated) {
+        window.alert(
+          "Mise à jour serveur impossible (droits, justification ou connexion). Réessayez après vérification."
+        );
+        return;
+      }
+      setCases((prev) => prev.map((c) => (c.id === caseId ? updated : c)));
+      if (patientMapping?.ipp) {
+        const result = await postPatientMapping({
+          caseCode: updated.caseCode,
+          caseId,
+          ipp: patientMapping.ipp,
+          lastName: patientMapping.lastName,
+          firstName: patientMapping.firstName,
+        });
+        if (result.ok === false) {
+          const { reason } = result;
+          if (reason === 'not_configured') {
+            window.alert(
+              "Un IPP a été saisi mais le proxy serveur n'est pas configuré (variable PATIENT_MAPPING_UPSTREAM_URL côté hébergement)."
+            );
+          } else if (reason === 'unauthorized') {
+            window.alert(
+              "Accès refusé (401). Indiquez le jeton dans Réglages → correspondance patient, puis réessayez."
+            );
+          } else {
+            window.alert(
+              "La correspondance patient n'a pas été transmise. Vérifiez le réseau et l'endpoint upstream."
+            );
+          }
+        }
+      }
+      setCaseToEdit(null);
+      setIsFormOpen(false);
+      return;
+    }
+
+    let code = '';
+    setCases((prev) =>
+      prev.map((c) => {
+        if (c.id !== caseId) return c;
+        code = c.caseCode;
+        return {
+          ...c,
+          ...data,
+          id: c.id,
+          caseCode: c.caseCode,
+          dateAdded: c.dateAdded,
+          authorEmail: c.authorEmail,
+          lastModifiedAt: new Date().toISOString(),
+          lastEditJustification: justification.trim(),
+        };
+      })
+    );
+
+    if (patientMapping?.ipp) {
+      const result = await postPatientMapping({
+        caseCode: code,
+        caseId,
+        ipp: patientMapping.ipp,
+        lastName: patientMapping.lastName,
+        firstName: patientMapping.firstName,
+      });
+      if (result.ok === false) {
+        const { reason } = result;
+        if (reason === 'not_configured') {
+          window.alert(
+            "Un IPP a été saisi mais le proxy serveur n'est pas configuré (variable PATIENT_MAPPING_UPSTREAM_URL côté hébergement). Le cas est enregistré en local uniquement."
+          );
+        } else if (reason === 'unauthorized') {
+          window.alert(
+            "Accès refusé (401). Indiquez le jeton dans Réglages → correspondance patient, puis réessayez."
+          );
+        } else {
+          window.alert(
+            "Le cas a été enregistré localement, mais la transmission vers votre base sécurisée a échoué. Vérifiez le réseau et l'endpoint upstream."
+          );
+        }
+      }
+    }
+
+    setCaseToEdit(null);
+    setIsFormOpen(false);
+  };
+
+  const deleteCase = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (!window.confirm('Supprimer définitivement ce cas ?')) return;
+    if (casesStorage === 'server') {
+      const ok = await deleteCaseOnServer(id);
+      if (!ok) {
+        window.alert('Suppression serveur impossible (droits ou connexion).');
+        return;
+      }
+    }
+    setCases((prev) => prev.filter((c) => c.id !== id));
+    setFavorites((prev) => prev.filter((fid) => fid !== id));
+    if (expandedCaseId === id) setExpandedCaseId(null);
+  };
+
+  const handleChangePassword = async () => {
+    setPwdMsg(null);
+    if (pwdNew.length < 8) {
+      setPwdMsg({
+        type: 'err',
+        text: 'Le nouveau mot de passe doit contenir au moins 8 caractères.',
+      });
+      return;
+    }
+    if (pwdNew !== pwdConfirm) {
+      setPwdMsg({
+        type: 'err',
+        text: 'La confirmation ne correspond pas au nouveau mot de passe.',
+      });
+      return;
+    }
+    setPwdLoading(true);
+    try {
+      const out = await changePassword(pwdCurrent, pwdNew);
+      if (out === 'ok') {
+        setPwdCurrent('');
+        setPwdNew('');
+        setPwdConfirm('');
+        setPwdMsg({
+          type: 'ok',
+          text: 'Mot de passe mis à jour. Utilisez-le à la prochaine connexion.',
+        });
+      } else if (out === 'wrong') {
+        setPwdMsg({ type: 'err', text: 'Mot de passe actuel incorrect.' });
+      } else if (out === 'weak') {
+        setPwdMsg({
+          type: 'err',
+          text: 'Le nouveau mot de passe doit contenir au moins 8 caractères.',
+        });
+      } else if (out === 'single_user') {
+        setPwdMsg({
+          type: 'err',
+          text: "Ce mode d'authentification ne permet pas le changement depuis l'app.",
+        });
+      } else {
+        setPwdMsg({ type: 'err', text: 'Impossible de mettre à jour. Réessayez.' });
+      }
+    } finally {
+      setPwdLoading(false);
+    }
+  };
+
+  const handleAuthLogout = async () => {
+    await authLogout();
+    const s = await fetchSession();
+    setSession(s);
+  };
+
+  if (authLoading || session === null) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-slate-50 dark:bg-[#020617]">
+        <Loader2 className="w-12 h-12 animate-spin text-blue-600" />
+        <p className="text-sm text-slate-400">Chargement…</p>
+      </div>
+    );
+  }
+
+  if (session.authRequired && !session.authenticated) {
+    if (session.multiUser && session.allowPublicRegistration && authView === 'register') {
+      return (
+        <RegisterForm
+          isDark={isDark}
+          onRegistered={() => setAuthView('login')}
+          onBack={() => setAuthView('login')}
+        />
+      );
+    }
+    return (
+      <LoginForm
+        isDark={isDark}
+        onSuccess={() => void fetchSession().then(setSession)}
+        onGoRegister={
+          session.multiUser && session.allowPublicRegistration
+            ? () => setAuthView('register')
+            : undefined
+        }
+        registrationHint={
+          session.authRequired ? session.registrationHint : undefined
+        }
+      />
+    );
+  }
+
+  return (
+    <div className={`min-h-screen bg-slate-50/40 dark:bg-[#020617] text-slate-900 dark:text-slate-100 transition-all duration-700`}>
+      <header className="sticky top-0 z-40 bg-white/80 dark:bg-slate-900/80 backdrop-blur-3xl border-b border-slate-200/60 dark:border-slate-800/60 h-28 flex items-center shadow-sm shadow-slate-200/50 dark:shadow-slate-900/50">
+        <div className="max-w-7xl mx-auto px-8 w-full flex items-center justify-between">
+          <div className="flex items-center gap-12">
+            <IGPLogo className="h-12 w-auto" />
+            <div className="hidden md:block h-10 w-[1px] bg-slate-200 dark:bg-slate-800"></div>
+            <RadioArchiveLogo />
+          </div>
+
+          <div className="flex items-center gap-3 sm:gap-4">
+            {session.authRequired &&
+              session.authenticated &&
+              'isAdmin' in session &&
+              session.isAdmin && (
+                <span
+                  role="status"
+                  aria-label="Profil administrateur"
+                  className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 sm:px-3 sm:py-1.5 text-[10px] sm:text-[11px] font-bold uppercase tracking-wider bg-amber-100 text-amber-950 dark:bg-amber-950/50 dark:text-amber-100 border border-amber-200/90 dark:border-amber-700/60 shadow-sm"
+                  title="Vous avez le profil administrateur (validation des inscriptions)"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 shrink-0 opacity-90" aria-hidden />
+                  <span className="hidden min-[400px]:inline">Admin</span>
+                </span>
+              )}
+            {session.authRequired && session.authenticated && (
+              <button
+                type="button"
+                onClick={() => void handleAuthLogout()}
+                className="p-4 rounded-full bg-white dark:bg-slate-800 text-slate-400 border border-slate-200 dark:border-slate-700 hover:text-rose-500 transition-all shadow-sm"
+                title="Déconnexion"
+              >
+                <LogOut className="w-5 h-5" />
+              </button>
+            )}
+            <button onClick={() => setIsDark(!isDark)} className="p-4 rounded-full bg-white dark:bg-slate-800 text-slate-400 border border-slate-200 dark:border-slate-700 hover:text-blue-500 transition-all shadow-sm">
+              {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsSettingsOpen(true)}
+              className="p-4 rounded-full bg-white dark:bg-slate-800 text-slate-400 border border-slate-200 dark:border-slate-700 hover:text-blue-600 transition-all shadow-sm shrink-0"
+              title="Réglages"
+              aria-label="Ouvrir les réglages"
+            >
+              <Settings2 className="w-5 h-5" />
+            </button>
+            <button
+              onClick={() => setIsTrainingOpen(true)}
+              disabled={cases.length === 0}
+              className="hidden sm:flex items-center gap-2 bg-slate-900 dark:bg-white hover:bg-slate-700 dark:hover:bg-slate-100 text-white dark:text-slate-900 px-6 py-3.5 rounded-full font-bold text-sm shadow-lg active:scale-95 transition-all shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Lancer le mode entraînement"
+            >
+              <GraduationCap className="w-5 h-5" />
+              <span>Entraînement</span>
+            </button>
+            <button
+              onClick={() => {
+                setCaseToEdit(null);
+                setIsFormOpen(true);
+              }}
+              className="flex items-center gap-2 sm:gap-3 bg-blue-600 hover:bg-blue-700 text-white px-4 sm:px-8 py-3.5 rounded-full font-bold text-sm sm:text-base shadow-xl shadow-blue-500/30 active:scale-95 transition-all shrink-0"
+            >
+              <Plus className="w-5 h-5" />
+              <span>Nouveau Dossier</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-7xl mx-auto px-8 py-14">
+        {session.authRequired &&
+          session.authenticated &&
+          'isAdmin' in session &&
+          session.isAdmin && (
+            <div className="mb-10 max-w-xl">
+              <AdminPendingRegistrations isDark={isDark} />
+            </div>
+          )}
+        <div className="mb-20">
+          <div className="flex items-center justify-between mb-10">
+            <div className="flex flex-col">
+              <h2 className="text-4xl font-light tracking-tighter text-slate-900 dark:text-white">Tableau de Bord <span className="text-blue-600 font-bold">IGP</span></h2>
+              <p className="text-xs uppercase tracking-[0.4em] font-bold text-slate-400 mt-2">Statistiques</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setIsTrainingOpen(true)}
+                disabled={cases.length === 0}
+                className="sm:hidden flex items-center gap-2 px-5 py-3 bg-slate-900 dark:bg-white text-white dark:text-slate-900 border border-transparent rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-slate-700 dark:hover:bg-slate-100 transition-all shadow-md disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <GraduationCap className="w-4 h-4" />
+                Entraîn.
+              </button>
+              <button onClick={() => setIsStatsOpen(!isStatsOpen)} className="flex items-center gap-3 px-6 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl text-xs font-black uppercase tracking-widest text-slate-500 hover:text-blue-600 transition-all shadow-md">
+                <Activity className="w-5 h-5" />
+                {isStatsOpen ? 'Masquer' : 'Stats'}
+              </button>
+            </div>
+          </div>
+          
+          {isStatsOpen && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in slide-in-from-top-4 duration-500">
+              {/* Total quick metrics */}
+              <div className="lg:col-span-3 grid grid-cols-2 sm:grid-cols-4 gap-4 mb-2">
+                <div className="bg-gradient-to-br from-blue-50 to-blue-100/50 dark:from-blue-900/20 dark:to-blue-950/10 border border-blue-100 dark:border-blue-800/40 rounded-2xl p-5 flex flex-col gap-1">
+                  <span className="text-3xl font-black text-blue-600">{cases.length}</span>
+                  <span className="text-xs font-bold text-blue-500/70 uppercase tracking-widest">Cas total</span>
+                </div>
+                <div className="bg-gradient-to-br from-purple-50 to-purple-100/50 dark:from-purple-900/20 dark:to-purple-950/10 border border-purple-100 dark:border-purple-800/40 rounded-2xl p-5 flex flex-col gap-1">
+                  <span className="text-3xl font-black text-purple-600">{stats.specialty.length}</span>
+                  <span className="text-xs font-bold text-purple-500/70 uppercase tracking-widest">Spécialités</span>
+                </div>
+                <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-900/20 dark:to-emerald-950/10 border border-emerald-100 dark:border-emerald-800/40 rounded-2xl p-5 flex flex-col gap-1">
+                  <span className="text-3xl font-black text-emerald-600">{stats.modality.length}</span>
+                  <span className="text-xs font-bold text-emerald-500/70 uppercase tracking-widest">Modalités</span>
+                </div>
+                <div className="bg-gradient-to-br from-amber-50 to-amber-100/50 dark:from-amber-900/20 dark:to-amber-950/10 border border-amber-100 dark:border-amber-800/40 rounded-2xl p-5 flex flex-col gap-1">
+                  <span className="text-3xl font-black text-amber-600">{favorites.length}</span>
+                  <span className="text-xs font-bold text-amber-500/70 uppercase tracking-widest">Favoris</span>
+                </div>
+              </div>
+
+              <div className="bg-white dark:bg-slate-900/60 p-10 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-sm">
+                <div className="flex items-center gap-4 mb-10">
+                  <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-xl text-blue-600"><Hash className="w-5 h-5" /></div>
+                  <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">Spécialités</h3>
+                </div>
+                <div className="space-y-5">
+                  {stats.specialty.slice(0, 6).map(([name, count]) => (
+                    <div key={name} className="flex flex-col gap-2">
+                      <div className="flex justify-between items-center text-xs font-bold">
+                        <span className="text-slate-500 dark:text-slate-400 truncate w-40">{name}</span>
+                        <span className="text-blue-600 tabular-nums">{count}</span>
+                      </div>
+                      <div className="h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full transition-all duration-700"
+                          style={{ width: `${(count / (cases.length || 1)) * 100}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-white dark:bg-slate-900/60 p-10 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-sm">
+                <div className="flex items-center gap-4 mb-10">
+                  <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded-xl text-amber-600"><BarChart3 className="w-5 h-5" /></div>
+                  <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">Complexité</h3>
+                </div>
+                <div className="space-y-5">
+                  {stats.difficultyByLevel.map(([name, count]) => {
+                    const cfg = DIFFICULTY_MAP[name as Difficulty];
+                    return (
+                      <div key={name} className="flex flex-col gap-2">
+                        <div className="flex justify-between items-center text-xs font-bold">
+                          <span className={`${cfg.color}`}>{name}</span>
+                          <span className={`tabular-nums ${cfg.color}`}>{count}</span>
+                        </div>
+                        <div className="h-2.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all duration-500 ${cfg.bar}`}
+                            style={{ width: `${cases.length ? (count / cases.length) * 100 : 0}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="bg-white dark:bg-slate-900/60 p-10 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-sm">
+                <div className="flex items-center gap-4 mb-10">
+                  <div className="p-3 bg-emerald-50 dark:bg-emerald-900/20 rounded-xl text-emerald-600"><Monitor className="w-5 h-5" /></div>
+                  <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">Modalités</h3>
+                </div>
+                <div className="space-y-5">
+                  {stats.modality.map(([name, count]) => (
+                    <div key={name} className="flex items-center gap-5">
+                      <span className="text-xs font-black text-slate-500 w-20 shrink-0">{name}</span>
+                      <div className="flex-1 h-5 bg-slate-100 dark:bg-slate-800 rounded-xl overflow-hidden relative">
+                        <div
+                          className="h-full bg-gradient-to-r from-emerald-500/60 to-emerald-400/50 transition-all duration-700"
+                          style={{ width: `${(count / (cases.length || 1)) * 100}%` }}
+                        />
+                        <span className="absolute right-3 top-0 text-[10px] font-black text-emerald-700 dark:text-emerald-400 leading-5">{count}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-3xl p-4 rounded-[2rem] border border-slate-200/50 dark:border-slate-800/50 shadow-lg mb-8 flex flex-col lg:flex-row gap-6 items-center">
+          <div className="flex-1 flex items-center gap-3 overflow-x-auto no-scrollbar w-full lg:w-auto p-1">
+            {tabs.map(tab => {
+              const info = tabDetailedCounts[tab];
+              const showRatio = searchQuery.length > 0 || smartResults !== null;
+              return (
+                <button key={tab} onClick={() => setActiveTab(tab as any)} className={`flex items-center gap-3 px-8 py-4 rounded-2xl whitespace-nowrap text-xs font-bold tracking-tight transition-all ${activeTab === tab ? 'bg-slate-950 dark:bg-white text-white dark:text-slate-950 shadow-xl scale-105' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
+                  {tab === 'Favoris' && <Star className={`w-4 h-4 ${favorites.length > 0 ? 'fill-yellow-400 text-yellow-400' : ''}`} />}
+                  {tab} 
+                  <span className={`text-[11px] font-black ${activeTab === tab ? 'opacity-40' : 'text-slate-300'}`}>
+                    {showRatio ? `${info?.visible}/${info?.total}` : info?.total}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="relative group w-full lg:w-96">
+            <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
+            <input 
+              type="text" 
+              value={searchQuery} 
+              onChange={e => {setSearchQuery(e.target.value); if(!e.target.value) setSmartResults(null);}} 
+              onKeyDown={(e) => e.key === 'Enter' && handleSmartSearch()}
+              placeholder="Recherche n° de cas, lésion, diagnostic..." 
+              className="w-full pl-14 pr-14 py-4.5 bg-slate-50 dark:bg-slate-950 border border-transparent dark:border-slate-800 focus:border-blue-500/30 rounded-2xl outline-none font-medium text-base transition-all shadow-inner" 
+            />
+            <button 
+              onClick={handleSmartSearch} 
+              disabled={isSmartLoading || !searchQuery} 
+              className="absolute right-4 top-1/2 -translate-y-1/2 p-2 rounded-xl text-blue-500 disabled:opacity-20 transition-all hover:bg-blue-50 dark:hover:bg-blue-900/20"
+            >
+              {isSmartLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
+            </button>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3 px-6 mb-12 text-xs font-black text-slate-400 uppercase tracking-[0.4em]">
+           <ListFilter className="w-4 h-4" />
+           <span>Cas affichés : <span className="text-blue-600 font-black">{filteredCases.length}</span> / Total Base : <span className="text-slate-900 dark:text-white font-black">{cases.length}</span></span>
+        </div>
+
+        <div className="bg-white dark:bg-slate-900 rounded-[3rem] border border-slate-200/50 dark:border-slate-800/50 shadow-xl overflow-hidden no-print">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-50/50 dark:bg-slate-800/20 border-b border-slate-100 dark:border-slate-800">
+                <th className="px-12 py-8 text-xs font-black text-slate-400 uppercase tracking-widest">Référence dossier</th>
+                <th className="px-12 py-8 text-xs font-black text-slate-400 uppercase tracking-widest">Spécialité & Niveau</th>
+                <th className="px-12 py-8 text-xs font-black text-slate-400 uppercase tracking-widest">Diagnostic & Clinique</th>
+                <th className="px-12 py-8 text-right">Options</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
+              {filteredCases.map((c) => {
+                const isExpanded = expandedCaseId === c.id;
+                const isFavorite = favorites.includes(c.id);
+                return (
+                  <React.Fragment key={c.id}>
+                    <tr 
+                      onClick={() => setExpandedCaseId(isExpanded ? null : c.id)} 
+                      className={`cursor-pointer group transition-all duration-300 ${isExpanded ? 'bg-blue-50/15 dark:bg-blue-900/5' : 'hover:bg-slate-50/70 dark:hover:bg-slate-800/40'}`}
+                    >
+                      <td className="px-12 py-10">
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center gap-3">
+                            <span className="text-base font-bold tracking-tight text-slate-900 dark:text-slate-100 font-mono">
+                              {c.caseCode}
+                            </span>
+                            {isFavorite && <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-12 py-10">
+                        <div className="flex flex-wrap gap-3">
+                          <Badge label={c.specialty} colorClass={SPECIALTY_MAP[c.specialty].color} bgClass={SPECIALTY_MAP[c.specialty].bg} />
+                          <Badge label={c.difficulty} colorClass={DIFFICULTY_MAP[c.difficulty].color} bgClass={DIFFICULTY_MAP[c.difficulty].bg} dotClass={DIFFICULTY_MAP[c.difficulty].dot} />
+                        </div>
+                      </td>
+                      <td className="px-12 py-10">
+                        <div className="flex flex-col max-w-sm">
+                          <span className="text-base font-semibold text-slate-900 dark:text-slate-100 truncate leading-snug">{c.diagnosis}</span>
+                          <span className="text-sm text-slate-400 dark:text-slate-500 truncate mt-2 italic font-light leading-relaxed">{c.clinicalNote}</span>
+                        </div>
+                      </td>
+                      <td className="px-12 py-10 text-right">
+                        <div className="flex items-center justify-end gap-4" onClick={e => e.stopPropagation()}>
+                           <button onClick={(e) => { e.stopPropagation(); toggleFavorite(c.id); }} className={`p-3 rounded-2xl transition-all ${isFavorite ? 'bg-yellow-400/15 text-yellow-500' : 'text-slate-300 hover:text-slate-900 dark:hover:text-white'}`}>
+                             <Star className={`w-5 h-5 ${isFavorite ? 'fill-yellow-400' : ''}`} />
+                           </button>
+                           {canEditCase(session, c) && (
+                             <button
+                               type="button"
+                               title="Modifier ce cas (auteur)"
+                               onClick={(e) => {
+                                 e.stopPropagation();
+                                 setCaseToEdit(c);
+                                 setIsFormOpen(true);
+                               }}
+                               className="p-3 text-slate-300 hover:text-amber-600 dark:hover:text-amber-400 rounded-2xl transition-all"
+                             >
+                               <Pencil className="w-5 h-5" />
+                             </button>
+                           )}
+                           <button onClick={(e) => deleteCase(e, c.id)} className="p-3 text-slate-300 hover:text-rose-600 rounded-2xl transition-all">
+                             <Trash2 className="w-5 h-5" />
+                           </button>
+                           <ChevronRight className={`w-6 h-6 text-slate-300 transition-transform ${isExpanded ? 'rotate-90 text-blue-500 scale-110' : ''}`} />
+                        </div>
+                      </td>
+                    </tr>
+                    {isExpanded && (
+                      <tr className="bg-slate-50/10 dark:bg-slate-900/10">
+                        <td colSpan={4} className="px-14 py-14">
+                          <div className="grid grid-cols-1 lg:grid-cols-12 gap-14">
+                            <div className="lg:col-span-5 space-y-10">
+                              <div>
+                                <h4 className="text-xs font-black text-blue-600 uppercase tracking-[0.4em] mb-6">Diagnostic Final</h4>
+                                <div className="p-8 bg-white dark:bg-slate-800 rounded-[2rem] border border-slate-100 dark:border-slate-700 shadow-md leading-relaxed text-base font-medium">
+                                  {c.diagnosis}
+                                </div>
+                              </div>
+                              <div>
+                                <h4 className="text-xs font-black text-slate-400 uppercase tracking-[0.4em] mb-6">Contexte Clinique</h4>
+                                <p className="text-base text-slate-500 dark:text-slate-400 leading-loose font-light px-2">{c.clinicalNote}</p>
+                              </div>
+                              {(c.lastModifiedAt || c.lastEditJustification) && (
+                                <div className="rounded-2xl border border-amber-200/80 dark:border-amber-900/50 bg-amber-50/50 dark:bg-amber-950/30 px-6 py-4 text-sm text-amber-900 dark:text-amber-100/90">
+                                  <p className="text-[10px] font-black uppercase tracking-widest text-amber-700 dark:text-amber-400 mb-2">
+                                    Dernière modification
+                                  </p>
+                                  {c.lastModifiedAt && (
+                                    <p className="text-xs text-amber-800/80 dark:text-amber-200/80 mb-2">
+                                      {new Date(c.lastModifiedAt).toLocaleString('fr-FR')}
+                                    </p>
+                                  )}
+                                  {c.lastEditJustification && (
+                                    <p className="leading-relaxed">
+                                      <span className="font-semibold">Justification : </span>
+                                      {c.lastEditJustification}
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                            <div className="lg:col-span-7">
+                               <MedicalStackViewer series={c.series || []} />
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+          {filteredCases.length === 0 && (
+            <div className="py-32 flex flex-col items-center gap-4 text-slate-400">
+               <Database className="w-16 h-16 mb-2 opacity-10" />
+               <p className="text-base font-light tracking-tight">Aucun cas clinique ne correspond à votre sélection.</p>
+               {cases.length === 0 && (
+                 <button
+                   onClick={() => { setCaseToEdit(null); setIsFormOpen(true); }}
+                   className="mt-4 flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-full font-bold text-sm shadow-lg transition-all active:scale-95"
+                 >
+                   <Plus className="w-4 h-4" />
+                   Créer le premier cas
+                 </button>
+               )}
+            </div>
+          )}
+        </div>
+      </main>
+
+      {isSettingsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-8 bg-slate-950/60 backdrop-blur-xl animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 rounded-[3rem] shadow-2xl w-full max-w-xl overflow-hidden border border-slate-200 dark:border-slate-800">
+            <div className="flex items-center justify-between p-10 border-b dark:border-slate-800">
+              <h2 className="text-2xl font-light tracking-tighter">Configuration</h2>
+              <button onClick={() => setIsSettingsOpen(false)} className="p-3 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-all"><X className="w-6 h-6" /></button>
+            </div>
+            <div className="p-10 space-y-8 max-h-[60vh] overflow-y-auto no-scrollbar">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-6">Filtres spécialités</p>
+                  <div className="space-y-4">
+                    {Object.values(Specialty).map(s => (
+                      <button key={s} onClick={() => toggleSpecialtyVisibility(s)} className={`flex items-center justify-between w-full p-5 rounded-2xl border transition-all ${visibleSpecialties.includes(s) ? 'bg-blue-50/50 dark:bg-blue-900/10 border-blue-200 dark:border-blue-800 shadow-sm' : 'bg-transparent border-slate-100 dark:border-slate-800 opacity-60'}`}>
+                        <span className="text-sm font-bold text-slate-700 dark:text-slate-300">{s}</span>
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 transition-all ${visibleSpecialties.includes(s) ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-200 dark:border-slate-700'}`}>{visibleSpecialties.includes(s) && <Check className="w-5 h-5" strokeWidth={3} />}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {session.authRequired &&
+                  session.authenticated &&
+                  'canChangePassword' in session &&
+                  session.canChangePassword && (
+                    <div className="pt-6 border-t border-slate-100 dark:border-slate-800 space-y-4">
+                      <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+                        <KeyRound className="w-5 h-5 text-blue-600 shrink-0" />
+                        <p className="text-xs font-black uppercase tracking-widest text-slate-400">
+                          Mot de passe du compte
+                        </p>
+                      </div>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                        Comptes enregistrés dans l’application (PostgreSQL). Mode « un seul compte » via le fichier
+                        d’environnement : changement côté serveur uniquement.
+                      </p>
+                      <div className="space-y-3">
+                        <div>
+                          <label
+                            htmlFor={pwdIdCur}
+                            className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5"
+                          >
+                            Actuel
+                          </label>
+                          <PasswordInputWithToggle
+                            id={pwdIdCur}
+                            value={pwdCurrent}
+                            onChange={setPwdCurrent}
+                            autoComplete="current-password"
+                            inputClass="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm"
+                            isDark={isDark}
+                            placeholder="Mot de passe actuel"
+                          />
+                        </div>
+                        <div>
+                          <label
+                            htmlFor={pwdIdNew}
+                            className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5"
+                          >
+                            Nouveau
+                          </label>
+                          <PasswordInputWithToggle
+                            id={pwdIdNew}
+                            value={pwdNew}
+                            onChange={setPwdNew}
+                            autoComplete="new-password"
+                            inputClass="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm"
+                            isDark={isDark}
+                            minLength={8}
+                            placeholder="Au moins 8 caractères"
+                          />
+                        </div>
+                        <div>
+                          <label
+                            htmlFor={pwdIdConf}
+                            className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5"
+                          >
+                            Confirmation
+                          </label>
+                          <PasswordInputWithToggle
+                            id={pwdIdConf}
+                            value={pwdConfirm}
+                            onChange={setPwdConfirm}
+                            autoComplete="new-password"
+                            inputClass="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm"
+                            isDark={isDark}
+                            minLength={8}
+                            placeholder="Répéter le nouveau mot de passe"
+                          />
+                        </div>
+                      </div>
+                      {pwdMsg && (
+                        <p
+                          className={`text-sm ${
+                            pwdMsg.type === 'ok'
+                              ? 'text-emerald-600 dark:text-emerald-400'
+                              : 'text-rose-600 dark:text-rose-400'
+                          }`}
+                        >
+                          {pwdMsg.text}
+                        </p>
+                      )}
+                      <button
+                        type="button"
+                        disabled={pwdLoading}
+                        onClick={() => void handleChangePassword()}
+                        className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-bold uppercase tracking-widest"
+                      >
+                        {pwdLoading ? 'Mise à jour…' : 'Enregistrer le nouveau mot de passe'}
+                      </button>
+                    </div>
+                  )}
+
+                <div className="pt-6 border-t border-slate-100 dark:border-slate-800 space-y-4">
+                  <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+                    <KeyRound className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <p className="text-xs font-black uppercase tracking-widest text-slate-400">Correspondance patient</p>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                    Si la DSI vous a donné un jeton d&apos;accès, collez-le ici pour cette session (uniquement sur ce navigateur).
+                  </p>
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    value={inboundTokenDraft}
+                    onChange={(e) => setInboundTokenDraft(e.target.value)}
+                    placeholder="Jeton d'accès au proxy"
+                    className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm"
+                  />
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => { setStoredInboundToken(inboundTokenDraft); }}
+                      className="flex-1 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold uppercase tracking-widest"
+                    >
+                      Enregistrer le jeton (session)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setStoredInboundToken(null); setInboundTokenDraft(''); }}
+                      className="px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-500"
+                    >
+                      Effacer
+                    </button>
+                  </div>
+                </div>
+            </div>
+            <div className="p-10 border-t dark:border-slate-800">
+              <button onClick={() => setIsSettingsOpen(false)} className="w-full py-5 bg-slate-950 dark:bg-white text-white dark:text-slate-950 rounded-2xl font-black uppercase tracking-[0.25em] text-xs shadow-2xl active:scale-95 transition-transform">Valider la Configuration</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isFormOpen && (
+        <CaseForm
+          key={caseToEdit?.id ?? 'new'}
+          mode={caseToEdit ? 'edit' : 'create'}
+          caseToEdit={caseToEdit ?? undefined}
+          nextCaseCode={getNextCaseCode(cases)}
+          onSave={handleAddCase}
+          onUpdate={handleUpdateCase}
+          onClose={() => {
+            setIsFormOpen(false);
+            setCaseToEdit(null);
+          }}
+          isDark={isDark}
+        />
+      )}
+
+      {isTrainingOpen && (
+        <TrainingModule
+          cases={cases}
+          onClose={() => setIsTrainingOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
