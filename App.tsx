@@ -104,13 +104,25 @@ function getNextCaseCode(cases: RadioCase[]): string {
   return `CASE-${String(max + 1).padStart(5, '0')}`;
 }
 
-/** Modification réservée à l'auteur lorsque la connexion est obligatoire. Sans auth obligatoire, tout utilisateur peut modifier (justification). */
+/** Modification réservée à l'auteur lorsque la connexion est obligatoire.
+ *  Les administrateurs peuvent modifier n'importe quel cas.
+ *  Sans auth obligatoire, tout utilisateur peut modifier (avec justification). */
 function canEditCase(session: SessionInfo, c: RadioCase): boolean {
   if (!session.authRequired) return true;
   if (!session.authenticated) return false;
+  // L'administrateur a un droit de modification universel
+  if ('isAdmin' in session && session.isAdmin) return true;
   const u = 'username' in session ? session.username?.trim().toLowerCase() : undefined;
   if (!u || !c.authorEmail) return false;
   return c.authorEmail === u;
+}
+
+/** Vrai si l'utilisateur connecté est admin ET que le cas appartient à quelqu'un d'autre. */
+function isAdminOverride(session: SessionInfo, c: RadioCase): boolean {
+  if (!session.authRequired || !session.authenticated) return false;
+  if (!('isAdmin' in session) || !session.isAdmin) return false;
+  const u = 'username' in session ? session.username?.trim().toLowerCase() : undefined;
+  return !!(u && c.authorEmail && c.authorEmail !== u);
 }
 
 function migrateLoadedCases(raw: unknown): RadioCase[] {
@@ -660,7 +672,7 @@ export default function App() {
 
   return (
     <div className={`min-h-screen bg-slate-50/40 dark:bg-[#020617] text-slate-900 dark:text-slate-100 transition-all duration-700`}>
-      <header className="sticky top-0 z-40 bg-white/80 dark:bg-slate-900/80 backdrop-blur-3xl border-b border-slate-200/60 dark:border-slate-800/60 h-28 flex items-center shadow-sm shadow-slate-200/50 dark:shadow-slate-900/50">
+      <header className="sticky top-0 z-40 bg-white/90 dark:bg-[#0b1120]/90 backdrop-blur-3xl border-b border-slate-200/50 dark:border-white/5 h-24 flex items-center" style={{boxShadow:'0 1px 0 0 rgba(0,0,0,.06), 0 4px 24px -4px rgba(0,0,0,.04)'}}>
         <div className="max-w-7xl mx-auto px-8 w-full flex items-center justify-between">
           <div className="flex items-center gap-12">
             <IGPLogo className="h-12 w-auto" />
@@ -854,142 +866,210 @@ export default function App() {
           )}
         </div>
 
-        <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-3xl p-4 rounded-[2rem] border border-slate-200/50 dark:border-slate-800/50 shadow-lg mb-8 flex flex-col lg:flex-row gap-6 items-center">
-          <div className="flex-1 flex items-center gap-3 overflow-x-auto no-scrollbar w-full lg:w-auto p-1">
+        {/* Filter + search bar */}
+        <div className="bg-white dark:bg-[#0d1424] rounded-2xl border border-slate-200/60 dark:border-white/5 shadow-sm mb-5 overflow-hidden">
+          {/* Tabs row */}
+          <div className="flex items-center gap-0 overflow-x-auto no-scrollbar border-b border-slate-100 dark:border-white/5 px-4">
             {tabs.map(tab => {
               const info = tabDetailedCounts[tab];
               const showRatio = searchQuery.length > 0 || smartResults !== null;
+              const isActive = activeTab === tab;
               return (
-                <button key={tab} onClick={() => setActiveTab(tab as any)} className={`flex items-center gap-3 px-8 py-4 rounded-2xl whitespace-nowrap text-xs font-bold tracking-tight transition-all ${activeTab === tab ? 'bg-slate-950 dark:bg-white text-white dark:text-slate-950 shadow-xl scale-105' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
-                  {tab === 'Favoris' && <Star className={`w-4 h-4 ${favorites.length > 0 ? 'fill-yellow-400 text-yellow-400' : ''}`} />}
-                  {tab} 
-                  <span className={`text-[11px] font-black ${activeTab === tab ? 'opacity-40' : 'text-slate-300'}`}>
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab as any)}
+                  className={`relative flex items-center gap-2 px-4 py-4 whitespace-nowrap text-xs font-bold transition-colors ${
+                    isActive
+                      ? 'text-slate-900 dark:text-white'
+                      : 'text-slate-400 dark:text-slate-600 hover:text-slate-600 dark:hover:text-slate-400'
+                  }`}
+                >
+                  {tab === 'Favoris' && <Star className={`w-3.5 h-3.5 shrink-0 ${favorites.length > 0 ? 'fill-yellow-400 text-yellow-400' : ''}`} />}
+                  {tab}
+                  <span className={`text-[10px] font-black tabular-nums ${isActive ? 'text-blue-500' : 'text-slate-300 dark:text-slate-700'}`}>
                     {showRatio ? `${info?.visible}/${info?.total}` : info?.total}
                   </span>
+                  {/* Active underline */}
+                  {isActive && <span className="absolute bottom-0 left-4 right-4 h-0.5 bg-blue-600 rounded-full" />}
                 </button>
               );
             })}
           </div>
-          <div className="relative group w-full lg:w-96">
-            <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
-            <input 
-              type="text" 
-              value={searchQuery} 
-              onChange={e => {setSearchQuery(e.target.value); if(!e.target.value) setSmartResults(null);}} 
-              onKeyDown={(e) => e.key === 'Enter' && handleSmartSearch()}
-              placeholder="Recherche n° de cas, lésion, diagnostic..." 
-              className="w-full pl-14 pr-14 py-4.5 bg-slate-50 dark:bg-slate-950 border border-transparent dark:border-slate-800 focus:border-blue-500/30 rounded-2xl outline-none font-medium text-base transition-all shadow-inner" 
-            />
-            <button 
-              onClick={handleSmartSearch} 
-              disabled={isSmartLoading || !searchQuery} 
-              className="absolute right-4 top-1/2 -translate-y-1/2 p-2 rounded-xl text-blue-500 disabled:opacity-20 transition-all hover:bg-blue-50 dark:hover:bg-blue-900/20"
-            >
-              {isSmartLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
-            </button>
+
+          {/* Search row */}
+          <div className="flex items-center gap-3 px-4 py-3">
+            <div className="relative flex-1 group">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={e => { setSearchQuery(e.target.value); if (!e.target.value) setSmartResults(null); }}
+                onKeyDown={(e) => e.key === 'Enter' && handleSmartSearch()}
+                placeholder="Chercher un cas, un diagnostic, une lésion…"
+                className="w-full pl-11 pr-11 py-2.5 bg-slate-50 dark:bg-white/5 border border-slate-200/60 dark:border-white/5 focus:border-blue-400 dark:focus:border-blue-500/50 rounded-xl outline-none text-sm font-medium text-slate-800 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-600 transition-all"
+              />
+              <button
+                onClick={handleSmartSearch}
+                disabled={isSmartLoading || !searchQuery}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-blue-500 disabled:opacity-25 transition-all hover:bg-blue-50 dark:hover:bg-blue-500/10"
+                title="Recherche sémantique IA"
+              >
+                {isSmartLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+              </button>
+            </div>
+
+            {/* Count pill */}
+            <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 dark:bg-white/5 rounded-xl border border-slate-100 dark:border-white/5 shrink-0">
+              <ListFilter className="w-3.5 h-3.5 text-slate-400" />
+              <span className="text-xs font-bold text-blue-600 tabular-nums">{filteredCases.length}</span>
+              <span className="text-xs text-slate-400">/</span>
+              <span className="text-xs font-bold text-slate-700 dark:text-slate-300 tabular-nums">{cases.length}</span>
+            </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 px-6 mb-12 text-xs font-black text-slate-400 uppercase tracking-[0.4em]">
-           <ListFilter className="w-4 h-4" />
-           <span>Cas affichés : <span className="text-blue-600 font-black">{filteredCases.length}</span> / Total Base : <span className="text-slate-900 dark:text-white font-black">{cases.length}</span></span>
-        </div>
-
-        <div className="bg-white dark:bg-slate-900 rounded-[3rem] border border-slate-200/50 dark:border-slate-800/50 shadow-xl overflow-hidden no-print">
+        <div className="bg-white dark:bg-[#0d1424] rounded-3xl border border-slate-200/60 dark:border-white/5 shadow-xl overflow-hidden">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="bg-slate-50/50 dark:bg-slate-800/20 border-b border-slate-100 dark:border-slate-800">
-                <th className="px-12 py-8 text-xs font-black text-slate-400 uppercase tracking-widest">Référence dossier</th>
-                <th className="px-12 py-8 text-xs font-black text-slate-400 uppercase tracking-widest">Spécialité & Niveau</th>
-                <th className="px-12 py-8 text-xs font-black text-slate-400 uppercase tracking-widest">Diagnostic & Clinique</th>
-                <th className="px-12 py-8 text-right">Options</th>
+              <tr className="border-b border-slate-100 dark:border-white/5">
+                <th className="px-7 py-5 text-[10px] font-black text-slate-400 dark:text-slate-600 uppercase tracking-[0.2em]">Référence</th>
+                <th className="px-7 py-5 text-[10px] font-black text-slate-400 dark:text-slate-600 uppercase tracking-[0.2em]">Spécialité</th>
+                <th className="px-7 py-5 text-[10px] font-black text-slate-400 dark:text-slate-600 uppercase tracking-[0.2em]">Diagnostic</th>
+                <th className="px-7 py-5 text-right text-[10px] font-black text-slate-400 dark:text-slate-600 uppercase tracking-[0.2em]">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
+            <tbody className="divide-y divide-slate-50 dark:divide-white/[0.03]">
               {filteredCases.map((c) => {
                 const isExpanded = expandedCaseId === c.id;
                 const isFavorite = favorites.includes(c.id);
+                const adminOverride = isAdminOverride(session, c);
                 return (
                   <React.Fragment key={c.id}>
-                    <tr 
-                      onClick={() => setExpandedCaseId(isExpanded ? null : c.id)} 
-                      className={`cursor-pointer group transition-all duration-300 ${isExpanded ? 'bg-blue-50/15 dark:bg-blue-900/5' : 'hover:bg-slate-50/70 dark:hover:bg-slate-800/40'}`}
+                    <tr
+                      onClick={() => setExpandedCaseId(isExpanded ? null : c.id)}
+                      className={`cursor-pointer group transition-colors duration-150 ${isExpanded ? 'bg-blue-50/30 dark:bg-blue-950/20' : 'hover:bg-slate-50/80 dark:hover:bg-white/[0.02]'}`}
                     >
-                      <td className="px-12 py-10">
-                        <div className="flex flex-col gap-2">
-                          <div className="flex items-center gap-3">
-                            <span className="text-base font-bold tracking-tight text-slate-900 dark:text-slate-100 font-mono">
-                              {c.caseCode}
-                            </span>
-                            {isFavorite && <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />}
+                      {/* Reference */}
+                      <td className="px-7 py-5">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-1.5 h-8 rounded-full shrink-0 ${isExpanded ? 'bg-blue-500' : 'bg-slate-200 dark:bg-white/10'}`} />
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-bold font-mono text-slate-900 dark:text-slate-100 tracking-tight">{c.caseCode}</span>
+                              {isFavorite && <Star className="w-3.5 h-3.5 fill-yellow-400 text-yellow-400 shrink-0" />}
+                            </div>
+                            <span className="text-[11px] text-slate-400 dark:text-slate-600 font-medium mt-0.5 block">{c.modality}</span>
                           </div>
                         </div>
                       </td>
-                      <td className="px-12 py-10">
-                        <div className="flex flex-wrap gap-3">
+
+                      {/* Specialty + difficulty */}
+                      <td className="px-7 py-5">
+                        <div className="flex flex-col gap-1.5">
                           <Badge label={c.specialty} colorClass={SPECIALTY_MAP[c.specialty].color} bgClass={SPECIALTY_MAP[c.specialty].bg} />
                           <Badge label={c.difficulty} colorClass={DIFFICULTY_MAP[c.difficulty].color} bgClass={DIFFICULTY_MAP[c.difficulty].bg} dotClass={DIFFICULTY_MAP[c.difficulty].dot} />
                         </div>
                       </td>
-                      <td className="px-12 py-10">
-                        <div className="flex flex-col max-w-sm">
-                          <span className="text-base font-semibold text-slate-900 dark:text-slate-100 truncate leading-snug">{c.diagnosis}</span>
-                          <span className="text-sm text-slate-400 dark:text-slate-500 truncate mt-2 italic font-light leading-relaxed">{c.clinicalNote}</span>
+
+                      {/* Diagnosis + note */}
+                      <td className="px-7 py-5">
+                        <div className="flex flex-col gap-1 max-w-md">
+                          <span className="text-sm font-semibold text-slate-900 dark:text-slate-100 leading-snug line-clamp-1">{c.diagnosis}</span>
+                          <span className="text-xs text-slate-400 dark:text-slate-500 leading-relaxed line-clamp-1 italic">{c.clinicalNote}</span>
                         </div>
                       </td>
-                      <td className="px-12 py-10 text-right">
-                        <div className="flex items-center justify-end gap-4" onClick={e => e.stopPropagation()}>
-                           <button onClick={(e) => { e.stopPropagation(); toggleFavorite(c.id); }} className={`p-3 rounded-2xl transition-all ${isFavorite ? 'bg-yellow-400/15 text-yellow-500' : 'text-slate-300 hover:text-slate-900 dark:hover:text-white'}`}>
-                             <Star className={`w-5 h-5 ${isFavorite ? 'fill-yellow-400' : ''}`} />
-                           </button>
-                           {canEditCase(session, c) && (
-                             <button
-                               type="button"
-                               title="Modifier ce cas (auteur)"
-                               onClick={(e) => {
-                                 e.stopPropagation();
-                                 setCaseToEdit(c);
-                                 setIsFormOpen(true);
-                               }}
-                               className="p-3 text-slate-300 hover:text-amber-600 dark:hover:text-amber-400 rounded-2xl transition-all"
-                             >
-                               <Pencil className="w-5 h-5" />
-                             </button>
-                           )}
-                           <button onClick={(e) => deleteCase(e, c.id)} className="p-3 text-slate-300 hover:text-rose-600 rounded-2xl transition-all">
-                             <Trash2 className="w-5 h-5" />
-                           </button>
-                           <ChevronRight className={`w-6 h-6 text-slate-300 transition-transform ${isExpanded ? 'rotate-90 text-blue-500 scale-110' : ''}`} />
+
+                      {/* Actions */}
+                      <td className="px-7 py-5">
+                        <div className="flex items-center justify-end gap-1.5" onClick={e => e.stopPropagation()}>
+                          {/* Favorite */}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); toggleFavorite(c.id); }}
+                            className={`p-2 rounded-xl transition-all ${isFavorite ? 'text-yellow-500 bg-yellow-50 dark:bg-yellow-500/10' : 'text-slate-300 dark:text-slate-700 hover:text-yellow-500 hover:bg-yellow-50 dark:hover:bg-yellow-500/10'}`}
+                            title={isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}
+                          >
+                            <Star className={`w-4 h-4 ${isFavorite ? 'fill-yellow-400' : ''}`} />
+                          </button>
+
+                          {/* Edit — visible only if allowed */}
+                          {canEditCase(session, c) && (
+                            <button
+                              type="button"
+                              title={adminOverride ? 'Modifier (droits administrateur)' : 'Modifier ce cas'}
+                              onClick={(e) => { e.stopPropagation(); setCaseToEdit(c); setIsFormOpen(true); }}
+                              className={`flex items-center gap-1 px-2.5 py-2 rounded-xl text-xs font-bold transition-all ${
+                                adminOverride
+                                  ? 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10 hover:bg-amber-100 dark:hover:bg-amber-500/20'
+                                  : 'text-slate-400 dark:text-slate-600 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-500/10'
+                              }`}
+                            >
+                              {adminOverride && <ShieldCheck className="w-3.5 h-3.5 shrink-0" />}
+                              <Pencil className="w-4 h-4" />
+                            </button>
+                          )}
+
+                          {/* Delete */}
+                          <button
+                            onClick={(e) => deleteCase(e, c.id)}
+                            className="p-2 rounded-xl text-slate-300 dark:text-slate-700 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition-all"
+                            title="Supprimer"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+
+                          {/* Expand */}
+                          <div className={`p-2 rounded-xl transition-all text-slate-400 ${isExpanded ? 'text-blue-500 bg-blue-50 dark:bg-blue-500/10' : ''}`}>
+                            <ChevronRight className={`w-4 h-4 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`} />
+                          </div>
                         </div>
                       </td>
                     </tr>
+
+                    {/* Expanded row */}
                     {isExpanded && (
-                      <tr className="bg-slate-50/10 dark:bg-slate-900/10">
-                        <td colSpan={4} className="px-14 py-14">
-                          <div className="grid grid-cols-1 lg:grid-cols-12 gap-14">
-                            <div className="lg:col-span-5 space-y-10">
-                              <div>
-                                <h4 className="text-xs font-black text-blue-600 uppercase tracking-[0.4em] mb-6">Diagnostic Final</h4>
-                                <div className="p-8 bg-white dark:bg-slate-800 rounded-[2rem] border border-slate-100 dark:border-slate-700 shadow-md leading-relaxed text-base font-medium">
-                                  {c.diagnosis}
-                                </div>
+                      <tr className="bg-slate-50/30 dark:bg-blue-950/10">
+                        <td colSpan={4} className="px-8 py-8">
+                          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                            {/* Left: clinical info */}
+                            <div className="lg:col-span-5 flex flex-col gap-5">
+                              {/* Diagnosis card */}
+                              <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-100 dark:border-white/5 p-5 shadow-sm">
+                                <p className="text-[10px] font-black uppercase tracking-[0.25em] text-blue-500 mb-3">Diagnostic Final</p>
+                                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 leading-relaxed">{c.diagnosis}</p>
                               </div>
-                              <div>
-                                <h4 className="text-xs font-black text-slate-400 uppercase tracking-[0.4em] mb-6">Contexte Clinique</h4>
-                                <p className="text-base text-slate-500 dark:text-slate-400 leading-loose font-light px-2">{c.clinicalNote}</p>
+
+                              {/* Clinical note */}
+                              <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-100 dark:border-white/5 p-5 shadow-sm">
+                                <p className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-400 mb-3">Contexte Clinique</p>
+                                <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed">{c.clinicalNote}</p>
                               </div>
+
+                              {/* Meta: author + modality */}
+                              <div className="flex flex-wrap gap-2">
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-white/5 text-xs font-medium text-slate-500 dark:text-slate-400">
+                                  <Monitor className="w-3.5 h-3.5" /> {c.modality}
+                                </span>
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-white/5 text-xs font-medium text-slate-500 dark:text-slate-400">
+                                  {new Date(c.dateAdded).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                </span>
+                                {c.authorEmail && (
+                                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-white/5 text-xs font-medium text-slate-500 dark:text-slate-400">
+                                    {c.authorEmail}
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Last edit */}
                               {(c.lastModifiedAt || c.lastEditJustification) && (
-                                <div className="rounded-2xl border border-amber-200/80 dark:border-amber-900/50 bg-amber-50/50 dark:bg-amber-950/30 px-6 py-4 text-sm text-amber-900 dark:text-amber-100/90">
-                                  <p className="text-[10px] font-black uppercase tracking-widest text-amber-700 dark:text-amber-400 mb-2">
-                                    Dernière modification
-                                  </p>
+                                <div className="rounded-2xl border border-amber-200/70 dark:border-amber-900/40 bg-amber-50/60 dark:bg-amber-950/20 p-4">
+                                  <p className="text-[10px] font-black uppercase tracking-[0.25em] text-amber-600 dark:text-amber-500 mb-2">Dernière modification</p>
                                   {c.lastModifiedAt && (
-                                    <p className="text-xs text-amber-800/80 dark:text-amber-200/80 mb-2">
+                                    <p className="text-xs text-amber-700/70 dark:text-amber-300/60 mb-1.5">
                                       {new Date(c.lastModifiedAt).toLocaleString('fr-FR')}
                                     </p>
                                   )}
                                   {c.lastEditJustification && (
-                                    <p className="leading-relaxed">
+                                    <p className="text-xs text-amber-900 dark:text-amber-200/80 leading-relaxed">
                                       <span className="font-semibold">Justification : </span>
                                       {c.lastEditJustification}
                                     </p>
@@ -997,8 +1077,10 @@ export default function App() {
                                 </div>
                               )}
                             </div>
+
+                            {/* Right: viewer */}
                             <div className="lg:col-span-7">
-                               <MedicalStackViewer series={c.series || []} />
+                              <MedicalStackViewer series={c.series || []} />
                             </div>
                           </div>
                         </td>
@@ -1009,19 +1091,22 @@ export default function App() {
               })}
             </tbody>
           </table>
+
           {filteredCases.length === 0 && (
-            <div className="py-32 flex flex-col items-center gap-4 text-slate-400">
-               <Database className="w-16 h-16 mb-2 opacity-10" />
-               <p className="text-base font-light tracking-tight">Aucun cas clinique ne correspond à votre sélection.</p>
-               {cases.length === 0 && (
-                 <button
-                   onClick={() => { setCaseToEdit(null); setIsFormOpen(true); }}
-                   className="mt-4 flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-full font-bold text-sm shadow-lg transition-all active:scale-95"
-                 >
-                   <Plus className="w-4 h-4" />
-                   Créer le premier cas
-                 </button>
-               )}
+            <div className="py-28 flex flex-col items-center gap-3 text-slate-400">
+              <div className="w-16 h-16 rounded-3xl bg-slate-100 dark:bg-white/5 flex items-center justify-center mb-2">
+                <Database className="w-7 h-7 opacity-30" />
+              </div>
+              <p className="text-sm font-medium text-slate-500 dark:text-slate-500">Aucun cas ne correspond à votre sélection.</p>
+              {cases.length === 0 && (
+                <button
+                  onClick={() => { setCaseToEdit(null); setIsFormOpen(true); }}
+                  className="mt-2 flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-full font-bold text-sm shadow-lg transition-all active:scale-95"
+                >
+                  <Plus className="w-4 h-4" />
+                  Créer le premier cas
+                </button>
+              )}
             </div>
           )}
         </div>
