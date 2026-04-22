@@ -88,7 +88,7 @@ export async function logout(): Promise<void> {
 }
 
 export async function fetchPendingRegistrations(): Promise<string[] | null> {
-  const res = await fetch(apiUrl("api/auth/pending-registrations"), {
+  const res = await fetch(apiUrl("api/auth/registrations"), {
     credentials: "include",
   });
   if (!res.ok) return null;
@@ -97,7 +97,7 @@ export async function fetchPendingRegistrations(): Promise<string[] | null> {
 }
 
 export async function approveRegistration(email: string): Promise<boolean> {
-  const res = await fetch(apiUrl("api/auth/approve-registration"), {
+  const res = await fetch(apiUrl("api/auth/registrations"), {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
@@ -109,11 +109,11 @@ export async function approveRegistration(email: string): Promise<boolean> {
 export type ChangePasswordOutcome = "ok" | "wrong" | "weak" | "error" | "single_user";
 
 export async function requestPasswordReset(email: string): Promise<"ok" | "unsupported" | "error"> {
-  const res = await fetch(apiUrl("api/auth/reset-request"), {
+  const res = await fetch(apiUrl("api/auth/reset"), {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ action: "request", email }),
   });
   if (res.ok) return "ok";
   let code: string | undefined;
@@ -131,11 +131,11 @@ export async function confirmPasswordReset(
   token: string,
   newPassword: string
 ): Promise<"ok" | "weak" | "invalid" | "error"> {
-  const res = await fetch(apiUrl("api/auth/reset-confirm"), {
+  const res = await fetch(apiUrl("api/auth/reset"), {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token, newPassword }),
+    body: JSON.stringify({ action: "confirm", token, newPassword }),
   });
   if (res.ok) return "ok";
   let err = "";
