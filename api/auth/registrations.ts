@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { requireAdminSession } from "../../lib/authAdminSession.js";
-import { approveUserByEmail } from "../../lib/usersRepo.js";
+import { approveUserByEmail, listPendingEmails } from "../../lib/usersRepo.js";
 
 function parseBody(req: VercelRequest): { email?: string } {
   const raw = req.body;
@@ -17,20 +17,29 @@ function parseBody(req: VercelRequest): { email?: string } {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
   const gate = await requireAdminSession(req.headers.cookie);
   if (!gate.ok) {
     return res.status(gate.status).json(gate.body);
   }
-  const { email } = parseBody(req);
-  if (typeof email !== "string" || !email.trim()) {
-    return res.status(400).json({ error: "Invalid body" });
+
+  if (req.method === "GET") {
+    const emails = await listPendingEmails();
+    return res.status(200).json({ emails });
   }
-  const ok = await approveUserByEmail(email.trim());
-  if (!ok) {
-    return res.status(404).json({ error: "Aucune demande en attente pour cet e-mail" });
+
+  if (req.method === "POST") {
+    const { email } = parseBody(req);
+    if (typeof email !== "string" || !email.trim()) {
+      return res.status(400).json({ error: "Invalid body" });
+    }
+    const ok = await approveUserByEmail(email.trim());
+    if (!ok) {
+      return res
+        .status(404)
+        .json({ error: "Aucune demande en attente pour cet e-mail" });
+    }
+    return res.status(200).json({ ok: true });
   }
-  return res.status(200).json({ ok: true });
+
+  return res.status(405).json({ error: "Method not allowed" });
 }

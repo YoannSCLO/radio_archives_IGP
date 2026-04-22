@@ -8,6 +8,8 @@ interface LoginFormProps {
   isDark: boolean;
   /** Si défini, affiche un lien vers l’inscription publique (multi-utilisateurs). */
   onGoRegister?: () => void;
+  /** Si défini, affiche un lien vers la demande de réinitialisation de mot de passe. */
+  onForgotPassword?: () => void;
   /** Message d’aide si l’inscription n’est pas encore activable (config incomplète). */
   registrationHint?: string;
 }
@@ -16,6 +18,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
   onSuccess,
   isDark,
   onGoRegister,
+  onForgotPassword,
   registrationHint,
 }) => {
   const [username, setUsername] = useState('');
@@ -135,6 +138,15 @@ export const LoginForm: React.FC<LoginFormProps> = ({
               className="w-full py-2 text-sm text-blue-600 dark:text-blue-400 font-medium hover:underline"
             >
               Créer un compte
+            </button>
+          )}
+          {onForgotPassword && (
+            <button
+              type="button"
+              onClick={onForgotPassword}
+              className="w-full py-1 text-xs text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
+            >
+              Mot de passe oublié&nbsp;?
             </button>
           )}
         </form>

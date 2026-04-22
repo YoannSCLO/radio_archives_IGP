@@ -68,3 +68,14 @@ export async function deleteCaseOnServer(id: string): Promise<boolean> {
   });
   return r.ok;
 }
+
+/** Annule une suppression logique récente côté serveur. Renvoie le cas restauré, ou `null`. */
+export async function restoreCaseOnServer(id: string): Promise<RadioCase | null> {
+  const r = await fetch(
+    apiUrl(`api/cases?action=restore&id=${encodeURIComponent(id)}`),
+    { method: "POST", credentials: "include" }
+  );
+  if (!r.ok) return null;
+  const j = (await r.json()) as { case?: RadioCase };
+  return j.case ?? null;
+}

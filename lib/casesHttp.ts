@@ -4,6 +4,7 @@ import {
   getRadioCaseById,
   insertRadioCase,
   listRadioCases,
+  restoreRadioCase,
   updateRadioCase,
 } from "./casesRepo.js";
 import {
@@ -66,6 +67,25 @@ export async function handleCasesApi(input: {
       const session = requireSessionForMutation(input.cookieHeader);
       if (!session.ok) {
         return { status: 401, body: { error: "Unauthorized" } };
+      }
+      const action = input.searchParams.get("action");
+      if (action === "restore") {
+        const id = input.searchParams.get("id");
+        if (!id?.trim()) {
+          return { status: 400, body: { error: "Query id requis" } };
+        }
+        const existing = await getRadioCaseById(id.trim(), { includeDeleted: true });
+        if (!existing) {
+          return { status: 404, body: { error: "Cas introuvable" } };
+        }
+        if (!canUserModifyCase(session.user, authReq, existing.authorEmail)) {
+          return { status: 403, body: { error: "Restauration réservée à l’auteur du cas" } };
+        }
+        const restored = await restoreRadioCase(id.trim());
+        if (!restored) {
+          return { status: 409, body: { error: "Ce cas n'est pas en corbeille" } };
+        }
+        return { status: 200, body: { case: restored } };
       }
       const parsed = parseCreateBody(input.body);
       if (!parsed.ok) {

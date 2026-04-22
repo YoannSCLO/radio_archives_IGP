@@ -23,6 +23,10 @@ import {
   isMultiUserMode,
 } from "../lib/authEnv.js";
 import { handleApproveByLinkGet } from "../lib/approveByLinkHttp.js";
+import {
+  confirmPasswordReset,
+  requestPasswordReset,
+} from "../lib/passwordResetActions.js";
 import { pathWithoutViteBase } from "./viteBasePath";
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -261,7 +265,7 @@ function installAuthApiMiddleware(middlewares: Connect.Server, viteBase: string)
           return;
         }
 
-        if (path === "/api/auth/pending-registrations" && req.method === "GET") {
+        if (path === "/api/auth/registrations" && req.method === "GET") {
           const gate = await requireAdminSession(req.headers.cookie);
           if (!gate.ok) {
             r.statusCode = gate.status;
@@ -275,7 +279,7 @@ function installAuthApiMiddleware(middlewares: Connect.Server, viteBase: string)
           return;
         }
 
-        if (path === "/api/auth/approve-registration" && req.method === "POST") {
+        if (path === "/api/auth/registrations" && req.method === "POST") {
           let raw: string;
           try {
             raw = await readBody(req as IncomingMessage);
@@ -330,10 +334,63 @@ function installAuthApiMiddleware(middlewares: Connect.Server, viteBase: string)
           return;
         }
 
-        if (path === "/api/auth/logout" && req.method === "POST") {
+        if (path === "/api/auth/session" && req.method === "DELETE") {
           r.setHeader("Set-Cookie", buildClearSessionCookie());
           r.setHeader("Content-Type", "application/json");
           r.end(JSON.stringify({ ok: true }));
+          return;
+        }
+
+        if (path === "/api/auth/reset" && req.method === "POST") {
+          let raw: string;
+          try {
+            raw = await readBody(req as IncomingMessage);
+          } catch {
+            r.statusCode = 400;
+            r.end();
+            return;
+          }
+          let body: {
+            action?: string;
+            email?: string;
+            token?: string;
+            newPassword?: string;
+          };
+          try {
+            body = raw ? JSON.parse(raw) : {};
+          } catch {
+            r.statusCode = 400;
+            r.setHeader("Content-Type", "application/json");
+            r.end(JSON.stringify({ error: "Invalid JSON" }));
+            return;
+          }
+          if (body.action === "request") {
+            const result = await requestPasswordReset(body.email);
+            if (!result.ok) {
+              r.statusCode = result.status;
+              r.setHeader("Content-Type", "application/json");
+              r.end(JSON.stringify(result.body));
+              return;
+            }
+            r.setHeader("Content-Type", "application/json");
+            r.end(JSON.stringify({ ok: true }));
+            return;
+          }
+          if (body.action === "confirm") {
+            const result = await confirmPasswordReset(body.token, body.newPassword);
+            if (!result.ok) {
+              r.statusCode = result.status;
+              r.setHeader("Content-Type", "application/json");
+              r.end(JSON.stringify(result.body));
+              return;
+            }
+            r.setHeader("Content-Type", "application/json");
+            r.end(JSON.stringify({ ok: true }));
+            return;
+          }
+          r.statusCode = 400;
+          r.setHeader("Content-Type", "application/json");
+          r.end(JSON.stringify({ error: "Action inconnue." }));
           return;
         }
 

@@ -4,6 +4,7 @@ import { Specialty, Difficulty, Modality, RadioCase, ImageSeries } from '../type
 import { analyzeCase } from '../services/geminiService';
 import { Loader2, Sparkles, X, ClipboardList, Hash, Image as ImageIcon, Plus, Trash2, Pencil } from 'lucide-react';
 import type { PatientMappingPayload } from '../services/patientMappingService';
+import { useToast } from './Toast';
 
 type NewCaseFormData = Omit<RadioCase, 'id' | 'dateAdded' | 'caseCode' | 'authorEmail' | 'lastModifiedAt' | 'lastEditJustification'>;
 
@@ -41,6 +42,7 @@ export const CaseForm: React.FC<CaseFormProps> = ({
   onClose,
   isDark,
 }) => {
+  const toast = useToast();
   const [formData, setFormData] = useState<NewCaseFormData>(emptyForm);
   const [editJustification, setEditJustification] = useState('');
   
@@ -132,7 +134,10 @@ export const CaseForm: React.FC<CaseFormProps> = ({
     if (isEditMode && caseToEdit) {
       const j = editJustification.trim();
       if (j.length < 10) {
-        window.alert('Indiquez une justification d’au moins 10 caractères pour tracer la modification.');
+        toast.warning(
+          'Justification trop courte',
+          'Indiquez une justification d’au moins 10 caractères pour tracer la modification.'
+        );
         return;
       }
       if (!onUpdate) return;
