@@ -108,6 +108,48 @@ export async function approveRegistration(email: string): Promise<boolean> {
 
 export type ChangePasswordOutcome = "ok" | "wrong" | "weak" | "error" | "single_user";
 
+export async function requestPasswordReset(email: string): Promise<"ok" | "unsupported" | "error"> {
+  const res = await fetch(apiUrl("api/auth/reset-request"), {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  if (res.ok) return "ok";
+  let code: string | undefined;
+  try {
+    const j = (await res.json()) as { code?: string };
+    code = j.code;
+  } catch {
+    /* ignore */
+  }
+  if (res.status === 503 && code === "unsupported") return "unsupported";
+  return "error";
+}
+
+export async function confirmPasswordReset(
+  token: string,
+  newPassword: string
+): Promise<"ok" | "weak" | "invalid" | "error"> {
+  const res = await fetch(apiUrl("api/auth/reset-confirm"), {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, newPassword }),
+  });
+  if (res.ok) return "ok";
+  let err = "";
+  try {
+    const j = (await res.json()) as { error?: string };
+    err = typeof j.error === "string" ? j.error : "";
+  } catch {
+    /* ignore */
+  }
+  if (res.status === 400 && /8 caractères/i.test(err)) return "weak";
+  if (res.status === 400) return "invalid";
+  return "error";
+}
+
 export async function changePassword(
   currentPassword: string,
   newPassword: string

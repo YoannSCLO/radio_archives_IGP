@@ -10,6 +10,9 @@ import { AdminPendingRegistrations } from './components/AdminPendingRegistration
 import { PasswordInputWithToggle } from './components/PasswordInputWithToggle';
 import { MedicalStackViewer } from './components/MedicalStackViewer';
 import { TrainingModule } from './components/TrainingModule';
+import { useToast } from './components/Toast';
+import { PasswordResetRequestForm } from './components/PasswordResetRequestForm';
+import { PasswordResetConfirmForm } from './components/PasswordResetConfirmForm';
 import { semanticSearch } from './services/geminiService';
 import { postPatientMapping, getStoredInboundToken, setStoredInboundToken } from './services/patientMappingService';
 import {
@@ -22,6 +25,7 @@ import {
   createCaseOnServer,
   deleteCaseOnServer,
   fetchCasesFromServer,
+  restoreCaseOnServer,
   updateCaseOnServer,
 } from './services/casesApi';
 import {
@@ -164,6 +168,7 @@ function migrateLoadedCases(raw: unknown): RadioCase[] {
 }
 
 export default function App() {
+  const toast = useToast();
   const [cases, setCases] = useState<RadioCase[]>([]);
   const [favorites, setFavorites] = useState<string[]>(() => {
     const saved = localStorage.getItem('radio_favorites');
@@ -185,7 +190,12 @@ export default function App() {
   const [pwdLoading, setPwdLoading] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   const [session, setSession] = useState<SessionInfo | null>(null);
-  const [authView, setAuthView] = useState<'login' | 'register'>('login');
+  const [authView, setAuthView] = useState<'login' | 'register' | 'reset-request'>('login');
+  const [resetToken, setResetToken] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const t = new URLSearchParams(window.location.search).get('reset');
+    return t?.trim() ? t.trim() : null;
+  });
   const [expandedCaseId, setExpandedCaseId] = useState<string | null>(null);
   const [isTrainingOpen, setIsTrainingOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'specialties' | 'account' | 'token'>('specialties');
@@ -368,12 +378,14 @@ export default function App() {
     if (casesStorage === 'server') {
       const created = await createCaseOnServer(data);
       if (!created) {
-        window.alert(
-          "Enregistrement sur le serveur impossible (vérifiez DATABASE_URL, la connexion et que vous êtes connecté si l'auth est activée)."
+        toast.error(
+          "Enregistrement serveur impossible",
+          "Vérifiez DATABASE_URL, votre connexion, et que vous êtes bien authentifié."
         );
         return;
       }
       setCases((prev) => [created, ...prev]);
+      toast.success('Cas enregistré', `${created.caseCode} ajouté au serveur.`);
       if (patientMapping?.ipp) {
         const result = await postPatientMapping({
           caseCode: created.caseCode,
@@ -385,16 +397,19 @@ export default function App() {
         if (result.ok === false) {
           const { reason } = result;
           if (reason === "not_configured") {
-            window.alert(
-              "Un IPP a été saisi mais le proxy serveur n'est pas configuré (variable PATIENT_MAPPING_UPSTREAM_URL côté hébergement). Le cas est enregistré sur le serveur mais la correspondance patient n'a pas été transmise."
+            toast.warning(
+              'IPP non transmis',
+              "Le proxy patient-mapping n'est pas configuré côté serveur (PATIENT_MAPPING_UPSTREAM_URL)."
             );
           } else if (reason === "unauthorized") {
-            window.alert(
-              "Accès refusé (401). Indiquez le jeton dans Réglages → correspondance patient, puis réessayez."
+            toast.error(
+              'Accès refusé (401)',
+              "Renseignez le jeton dans Réglages → correspondance patient."
             );
           } else {
-            window.alert(
-              "La correspondance patient n'a pas été transmise. Vérifiez le réseau et l'endpoint upstream."
+            toast.error(
+              'Correspondance patient non transmise',
+              "Vérifiez le réseau et l'endpoint upstream."
             );
           }
         }
@@ -437,21 +452,25 @@ export default function App() {
       if (result.ok === false) {
         const { reason } = result;
         if (reason === "not_configured") {
-          window.alert(
-            "Un IPP a été saisi mais le proxy serveur n'est pas configuré (variable PATIENT_MAPPING_UPSTREAM_URL côté hébergement). Le cas est enregistré en local uniquement."
+          toast.warning(
+            'IPP non transmis',
+            "Le proxy serveur n'est pas configuré. Cas enregistré en local uniquement."
           );
         } else if (reason === "unauthorized") {
-          window.alert(
-            "Accès refusé (401). Indiquez le jeton dans Réglages → correspondance patient, puis réessayez."
+          toast.error(
+            'Accès refusé (401)',
+            "Renseignez le jeton dans Réglages → correspondance patient."
           );
         } else {
-          window.alert(
-            "Le cas a été enregistré localement, mais la transmission vers votre base sécurisée a échoué. Vérifiez le réseau et l'endpoint upstream."
+          toast.error(
+            'Correspondance patient non transmise',
+            "Le cas reste enregistré localement. Vérifiez le réseau et l'endpoint upstream."
           );
         }
       }
     }
 
+    toast.success('Cas enregistré', `${nextCode} ajouté (local).`);
     setIsFormOpen(false);
   };
 
@@ -475,12 +494,14 @@ export default function App() {
         justification
       );
       if (!updated) {
-        window.alert(
-          "Mise à jour serveur impossible (droits, justification ou connexion). Réessayez après vérification."
+        toast.error(
+          'Mise à jour serveur impossible',
+          "Droits, justification ou connexion : vérifiez puis réessayez."
         );
         return;
       }
       setCases((prev) => prev.map((c) => (c.id === caseId ? updated : c)));
+      toast.success('Cas mis à jour', `${updated.caseCode} enregistré.`);
       if (patientMapping?.ipp) {
         const result = await postPatientMapping({
           caseCode: updated.caseCode,
@@ -492,16 +513,19 @@ export default function App() {
         if (result.ok === false) {
           const { reason } = result;
           if (reason === 'not_configured') {
-            window.alert(
-              "Un IPP a été saisi mais le proxy serveur n'est pas configuré (variable PATIENT_MAPPING_UPSTREAM_URL côté hébergement)."
+            toast.warning(
+              'IPP non transmis',
+              "Le proxy serveur n'est pas configuré (PATIENT_MAPPING_UPSTREAM_URL)."
             );
           } else if (reason === 'unauthorized') {
-            window.alert(
-              "Accès refusé (401). Indiquez le jeton dans Réglages → correspondance patient, puis réessayez."
+            toast.error(
+              'Accès refusé (401)',
+              "Renseignez le jeton dans Réglages → correspondance patient."
             );
           } else {
-            window.alert(
-              "La correspondance patient n'a pas été transmise. Vérifiez le réseau et l'endpoint upstream."
+            toast.error(
+              'Correspondance patient non transmise',
+              "Vérifiez le réseau et l'endpoint upstream."
             );
           }
         }
@@ -540,38 +564,72 @@ export default function App() {
       if (result.ok === false) {
         const { reason } = result;
         if (reason === 'not_configured') {
-          window.alert(
-            "Un IPP a été saisi mais le proxy serveur n'est pas configuré (variable PATIENT_MAPPING_UPSTREAM_URL côté hébergement). Le cas est enregistré en local uniquement."
+          toast.warning(
+            'IPP non transmis',
+            "Le proxy serveur n'est pas configuré. Cas enregistré en local uniquement."
           );
         } else if (reason === 'unauthorized') {
-          window.alert(
-            "Accès refusé (401). Indiquez le jeton dans Réglages → correspondance patient, puis réessayez."
+          toast.error(
+            'Accès refusé (401)',
+            "Renseignez le jeton dans Réglages → correspondance patient."
           );
         } else {
-          window.alert(
-            "Le cas a été enregistré localement, mais la transmission vers votre base sécurisée a échoué. Vérifiez le réseau et l'endpoint upstream."
+          toast.error(
+            'Correspondance patient non transmise',
+            "Cas enregistré localement. Vérifiez le réseau et l'endpoint upstream."
           );
         }
       }
     }
 
+    toast.success('Cas mis à jour');
     setCaseToEdit(null);
     setIsFormOpen(false);
   };
 
   const deleteCase = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (!window.confirm('Supprimer définitivement ce cas ?')) return;
-    if (casesStorage === 'server') {
+    const victim = cases.find((c) => c.id === id);
+    if (!victim) return;
+    const wasFavorite = favorites.includes(id);
+    const usingServer = casesStorage === 'server';
+    if (usingServer) {
       const ok = await deleteCaseOnServer(id);
       if (!ok) {
-        window.alert('Suppression serveur impossible (droits ou connexion).');
+        toast.error('Suppression impossible', 'Droits ou connexion : vérifiez puis réessayez.');
         return;
       }
     }
     setCases((prev) => prev.filter((c) => c.id !== id));
     setFavorites((prev) => prev.filter((fid) => fid !== id));
     if (expandedCaseId === id) setExpandedCaseId(null);
+    toast.push({
+      kind: 'info',
+      title: `${victim.caseCode} supprimé`,
+      message: usingServer ? 'Annulation possible pendant quelques secondes.' : 'Action locale — annulable.',
+      durationMs: 8000,
+      action: {
+        label: 'Annuler',
+        run: () => {
+          if (usingServer) {
+            void (async () => {
+              const restored = await restoreCaseOnServer(id);
+              if (!restored) {
+                toast.error('Restauration échouée', "Le cas n'a pas pu être restauré côté serveur.");
+                return;
+              }
+              setCases((prev) => (prev.some((c) => c.id === restored.id) ? prev : [restored, ...prev]));
+              if (wasFavorite) setFavorites((prev) => (prev.includes(id) ? prev : [...prev, id]));
+              toast.success('Cas restauré', restored.caseCode);
+            })();
+          } else {
+            setCases((prev) => (prev.some((c) => c.id === victim.id) ? prev : [victim, ...prev]));
+            if (wasFavorite) setFavorites((prev) => (prev.includes(id) ? prev : [...prev, id]));
+            toast.success('Cas restauré', victim.caseCode);
+          }
+        },
+      },
+    });
   };
 
   const handleChangePassword = async () => {
@@ -644,12 +702,37 @@ export default function App() {
     );
   }
 
+  if (resetToken) {
+    return (
+      <PasswordResetConfirmForm
+        token={resetToken}
+        isDark={isDark}
+        onSuccess={() => {
+          setResetToken(null);
+          if (typeof window !== 'undefined') {
+            window.history.replaceState(null, '', window.location.pathname);
+          }
+          setAuthView('login');
+          void fetchSession().then(setSession);
+        }}
+      />
+    );
+  }
+
   if (session.authRequired && !session.authenticated) {
     if (session.multiUser && session.allowPublicRegistration && authView === 'register') {
       return (
         <RegisterForm
           isDark={isDark}
           onRegistered={() => setAuthView('login')}
+          onBack={() => setAuthView('login')}
+        />
+      );
+    }
+    if (authView === 'reset-request') {
+      return (
+        <PasswordResetRequestForm
+          isDark={isDark}
           onBack={() => setAuthView('login')}
         />
       );
@@ -662,6 +745,9 @@ export default function App() {
           session.multiUser && session.allowPublicRegistration
             ? () => setAuthView('register')
             : undefined
+        }
+        onForgotPassword={
+          session.multiUser ? () => setAuthView('reset-request') : undefined
         }
         registrationHint={
           session.authRequired ? session.registrationHint : undefined

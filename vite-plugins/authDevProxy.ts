@@ -23,6 +23,10 @@ import {
   isMultiUserMode,
 } from "../lib/authEnv.js";
 import { handleApproveByLinkGet } from "../lib/approveByLinkHttp.js";
+import {
+  confirmPasswordReset,
+  requestPasswordReset,
+} from "../lib/passwordResetActions.js";
 import { pathWithoutViteBase } from "./viteBasePath";
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -332,6 +336,66 @@ function installAuthApiMiddleware(middlewares: Connect.Server, viteBase: string)
 
         if (path === "/api/auth/logout" && req.method === "POST") {
           r.setHeader("Set-Cookie", buildClearSessionCookie());
+          r.setHeader("Content-Type", "application/json");
+          r.end(JSON.stringify({ ok: true }));
+          return;
+        }
+
+        if (path === "/api/auth/reset-request" && req.method === "POST") {
+          let raw: string;
+          try {
+            raw = await readBody(req as IncomingMessage);
+          } catch {
+            r.statusCode = 400;
+            r.end();
+            return;
+          }
+          let body: { email?: string };
+          try {
+            body = raw ? JSON.parse(raw) : {};
+          } catch {
+            r.statusCode = 400;
+            r.setHeader("Content-Type", "application/json");
+            r.end(JSON.stringify({ error: "Invalid JSON" }));
+            return;
+          }
+          const result = await requestPasswordReset(body.email);
+          if (!result.ok) {
+            r.statusCode = result.status;
+            r.setHeader("Content-Type", "application/json");
+            r.end(JSON.stringify(result.body));
+            return;
+          }
+          r.setHeader("Content-Type", "application/json");
+          r.end(JSON.stringify({ ok: true }));
+          return;
+        }
+
+        if (path === "/api/auth/reset-confirm" && req.method === "POST") {
+          let raw: string;
+          try {
+            raw = await readBody(req as IncomingMessage);
+          } catch {
+            r.statusCode = 400;
+            r.end();
+            return;
+          }
+          let body: { token?: string; newPassword?: string };
+          try {
+            body = raw ? JSON.parse(raw) : {};
+          } catch {
+            r.statusCode = 400;
+            r.setHeader("Content-Type", "application/json");
+            r.end(JSON.stringify({ error: "Invalid JSON" }));
+            return;
+          }
+          const result = await confirmPasswordReset(body.token, body.newPassword);
+          if (!result.ok) {
+            r.statusCode = result.status;
+            r.setHeader("Content-Type", "application/json");
+            r.end(JSON.stringify(result.body));
+            return;
+          }
           r.setHeader("Content-Type", "application/json");
           r.end(JSON.stringify({ ok: true }));
           return;

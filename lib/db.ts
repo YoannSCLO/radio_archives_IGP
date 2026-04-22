@@ -75,5 +75,8 @@ export async function ensureRadioCasesTable(): Promise<void> {
     );
   `;
   await s`CREATE INDEX IF NOT EXISTS idx_radio_cases_created_at ON radio_cases (created_at DESC);`;
+  // Soft delete : purge planifiée séparément (corbeille 30 j côté UX).
+  await s`ALTER TABLE radio_cases ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`;
+  await s`CREATE INDEX IF NOT EXISTS idx_radio_cases_deleted_at ON radio_cases (deleted_at)`;
   radioCasesTableEnsured = true;
 }

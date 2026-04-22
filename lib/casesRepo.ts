@@ -54,20 +54,32 @@ export async function listRadioCases(): Promise<RadioCase[]> {
     SELECT id, case_code, author_email, specialty, difficulty, modality,
            clinical_note, diagnosis, series, created_at, updated_at, last_edit_justification
     FROM radio_cases
+    WHERE deleted_at IS NULL
     ORDER BY created_at DESC
   `;
   return (rows as Parameters<typeof rowToCase>[0][]).map(rowToCase);
 }
 
-export async function getRadioCaseById(id: string): Promise<RadioCase | null> {
+/** `includeDeleted` : utile pour restore (on doit retrouver la ligne marquée supprimée). */
+export async function getRadioCaseById(
+  id: string,
+  options?: { includeDeleted?: boolean }
+): Promise<RadioCase | null> {
   await ensureRadioCasesTable();
   const sql = getSql();
   if (!sql) throw new Error("No database");
-  const rows = await sql`
-    SELECT id, case_code, author_email, specialty, difficulty, modality,
-           clinical_note, diagnosis, series, created_at, updated_at, last_edit_justification
-    FROM radio_cases WHERE id = ${id}
-  `;
+  const includeDeleted = options?.includeDeleted === true;
+  const rows = includeDeleted
+    ? await sql`
+        SELECT id, case_code, author_email, specialty, difficulty, modality,
+               clinical_note, diagnosis, series, created_at, updated_at, last_edit_justification
+        FROM radio_cases WHERE id = ${id}
+      `
+    : await sql`
+        SELECT id, case_code, author_email, specialty, difficulty, modality,
+               clinical_note, diagnosis, series, created_at, updated_at, last_edit_justification
+        FROM radio_cases WHERE id = ${id} AND deleted_at IS NULL
+      `;
   const r = (rows as Parameters<typeof rowToCase>[0][])[0];
   return r ? rowToCase(r) : null;
 }
@@ -146,10 +158,29 @@ export async function updateRadioCase(
   return getRadioCaseById(id);
 }
 
+/** Suppression logique : marque `deleted_at = NOW()` pour permettre l'annulation. */
 export async function deleteRadioCase(id: string): Promise<boolean> {
   await ensureRadioCasesTable();
   const sql = getSql();
   if (!sql) throw new Error("No database");
-  const rows = await sql`DELETE FROM radio_cases WHERE id = ${id} RETURNING id`;
+  const rows = await sql`
+    UPDATE radio_cases SET deleted_at = NOW()
+    WHERE id = ${id} AND deleted_at IS NULL
+    RETURNING id
+  `;
   return (rows as { id: string }[]).length > 0;
+}
+
+/** Annule une suppression logique récente. */
+export async function restoreRadioCase(id: string): Promise<RadioCase | null> {
+  await ensureRadioCasesTable();
+  const sql = getSql();
+  if (!sql) throw new Error("No database");
+  const rows = await sql`
+    UPDATE radio_cases SET deleted_at = NULL
+    WHERE id = ${id} AND deleted_at IS NOT NULL
+    RETURNING id
+  `;
+  if ((rows as { id: string }[]).length === 0) return null;
+  return getRadioCaseById(id);
 }
