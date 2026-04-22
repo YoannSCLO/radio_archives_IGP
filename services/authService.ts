@@ -84,7 +84,7 @@ export async function register(email: string, password: string): Promise<Registe
 }
 
 export async function logout(): Promise<void> {
-  await fetch(apiUrl("api/auth/logout"), { method: "POST", credentials: "include" });
+  await fetch(apiUrl("api/auth/session"), { method: "DELETE", credentials: "include" });
 }
 
 export async function fetchPendingRegistrations(): Promise<string[] | null> {

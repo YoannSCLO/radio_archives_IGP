@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import {
+  buildClearSessionCookie,
   getUserFromCookieHeader,
   isAuthConfigured,
 } from "../../lib/authCore.js";
@@ -11,6 +12,11 @@ import {
 import { getUserAuthFlags } from "../../lib/usersRepo.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (req.method === "DELETE") {
+    res.setHeader("Set-Cookie", buildClearSessionCookie());
+    return res.status(200).json({ ok: true });
+  }
+
   if (req.method !== "GET") {
     return res.status(405).json({ error: "Method not allowed" });
   }

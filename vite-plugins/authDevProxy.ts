@@ -334,7 +334,7 @@ function installAuthApiMiddleware(middlewares: Connect.Server, viteBase: string)
           return;
         }
 
-        if (path === "/api/auth/logout" && req.method === "POST") {
+        if (path === "/api/auth/session" && req.method === "DELETE") {
           r.setHeader("Set-Cookie", buildClearSessionCookie());
           r.setHeader("Content-Type", "application/json");
           r.end(JSON.stringify({ ok: true }));
